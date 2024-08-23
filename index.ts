@@ -2,17 +2,22 @@
 import { LRUCache } from "lru-cache";
 import type { RedisClientOptions } from "redis";
 import { createClient } from "redis";
-import cloneDeep from "lodash.clonedeep";
+import cloneDeep from "lodash/clonedeep";
 import EventEmitter from "node:events";
 
-export type RedisGetOpts = {
+interface RedisHget {
 	type: "HGET";
 	argument: string;
-} | {
+}
+interface RedisGet {
 	type: "GET";
-} | {
+}
+
+interface RedisHgetall {
 	type: "HGETALL";
-};
+}
+
+export type RedisGetOpts = RedisHget | RedisGet | RedisHgetall;
 
 export type RedisChannelOpts = {
 	type: "subscribe" | "pSubscribe";
@@ -20,52 +25,83 @@ export type RedisChannelOpts = {
 };
 
 export type GenKeyFromMsg = (msg: string) => string | null | undefined;
-// any because it depends on the GetOpts
-export type ValueTransformer<T> = (rVal: any) => T | null | undefined;
-export type AdditionalValueFetchMethode<T> = (key: string) => Promise<T | null | undefined>;
+// any because it depends on the GetOpts and Users can type it correctly
+export type Deserialize<V, RV extends (string | Record<string, string>) = string> = (rVal: RV, key: string) => V | null | undefined;
+
+export type FallbackFetchMethode<T> = (key: string) => Promise<T | null | undefined>;
 
 export interface GetOpts {
 	clone?: boolean;
 }
 
+export interface Events {
+	"ready": [];
+	"error": [error: Error, client: "client" | "subscriber"];
+	"unexpectedError": [error: unknown, ctx: {key: string} | { msg: string }];
+	"dropped": [key: string];
+	"refetched": [key: string];
+	"fetched": [key: string];
+}
+
 /**
  * options for the constructor of the redis object cache.
  *
- * @property redisClientOpts: Options for the redis connection. Will be used for client and subscriber(client.duplicate()).
- * @property redisChannelOpts: Make the subscriber subscribe to 1 channel or pSubscribe to multiple channels.
- * @property cacheMaxSize: Max Number of Object to store in the lru-cache.
- * @property fetchOpts: Options for wich method the client should use when fetching data from redis
+ * @property redis: Options concerning the direct redis communication.
+ * * redis.clientOpts: Options for the redis connection. Will be used for client and subscriber(client.duplicate()).
+ * * redis.channelOpts: Make the subscriber subscribe to 1 channel or pSubscribe to multiple channels.
+ * * redis.getOpts: Options for wich method the client should use when fetching data from redis
  * @property genKeyFromMsg:
- * 	Function that takes a message that was send over the redis channel and returns a key that needs to be updated.
- * 	Return null to ignore message.
- *	This function must not be async.
- * @property redisValueTransformer:
- * 	Function that takes a value returned from redis (please remember to check for misses) and transforms it into a value that should be stored in lru cache.
- * 	Return null to ignore value.
- *	This function must not be async.
- * @property handleErrors: Opts how to handle Error. Undefined behaves the same as "warn"
- * 	"warn": console.warn(error);
- * 	"ignore": // do nothing
- * 	"throw": throw error;
- * 	"emit": this.emit("unexpectedError", error);
- * @property additionalValueFetchMethode: Optional function to be called in case a key can not be found in redis.
+ * Function that takes a message that was send over the redis channel and returns a key that needs to be updated.\
+ * Return null to ignore message.\
+ * This function must not be async.
+ * @property deserialize:
+ * Function that takes a value returned from redis and returns a value to be cached\
+ * Return null to ignore value.\
+ * This function must not be async.
+ * @property cacheMaxSize (Optional): Max number of Objects to store in the lru-cache (Default = 1000).
+ * @property errorHandlerStrategy: Opts how to handle Error.
+ * * "warn" (Default): console.warn(error);
+ * * "ignore": // do nothing
+ * * "throw": throw error;
+ * * "emit": this.emit("unexpectedError", error);
+ * @property fallbackFetchMethod: Optional function to be called in case a key can not be found in redis.\
  * This means the function is called if a the redisValueTransformer function returns null;
- * @property fetchOnMessage: Whether a key should be also fetched or just deleted when a message is received (Default = false).
+ * @property onMessageStrategy (Optional): Options for how the RedisValueCache should behave once it receives a message.
+ * * "drop" (Default): The value will be deleted from the cache.
+ * * "refetch": If a value was already the cache the updated value will be fetched.
+ * * "fetchAlways": The updated value will always be fetched even if it was not in the cache before.
+ * @property freezeObjects (Optional): Whether or not to freeze values when they are cached.
  *
  * @interface Opts
- * @template storedValueType
+ * @template storedValueType type of the values you want to store.
  */
-export interface Opts<storedValueType extends NonNullable<unknown> = NonNullable<unknown>>{
-	redisClientOpts: RedisClientOptions;
-	redisChannelOpts: RedisChannelOpts;
-	redisGetOpts: RedisGetOpts;
+export type Opts<storedValueType> = {
+	redis: {
+		clientOpts?: RedisClientOptions;
+		channelOpts: RedisChannelOpts;
+		getOpts: RedisGet | RedisHget;
+	};
 	genKeyFromMsg: GenKeyFromMsg;
-	valueTransformer: ValueTransformer<storedValueType>;
+	deserialize: Deserialize<storedValueType>;
 	cacheMaxSize?: number;
-	handleErrors?: "emit"|"warn"|"throw"|"ignore";
-	additionalValueFetchMethod?: AdditionalValueFetchMethode<storedValueType>;
-	fetchOnMessage?: boolean;
-}
+	errorHandlerStrategy?: "emit"|"warn"|"throw"|"ignore";
+	fallbackFetchMethod?: FallbackFetchMethode<storedValueType>;
+	onMessageStrategy?: "drop" | "refetch" | "fetchAlways";
+	freeze?: boolean;
+} | {
+	redis: {
+		clientOpts?: RedisClientOptions;
+		channelOpts: RedisChannelOpts;
+		getOpts: RedisHgetall;
+	};
+	genKeyFromMsg: GenKeyFromMsg;
+	deserialize: Deserialize<storedValueType, Record<string, string>>;
+	cacheMaxSize?: number;
+	errorHandlerStrategy?: "emit"|"warn"|"throw"|"ignore";
+	fallbackFetchMethod?: FallbackFetchMethode<storedValueType>;
+	onMessageStrategy?: "drop" | "refetch" | "fetchAlways";
+	freeze?: boolean;
+};
 
 /**
  * An object that caches an automatically updates your values from redis
@@ -77,80 +113,92 @@ export interface Opts<storedValueType extends NonNullable<unknown> = NonNullable
  * @emits unexpectedError when the handleErrors option is set to "emit" and an unexpected error shows up (usually in fetch function).
  * @template storedValueType
  */
-export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonNullable<unknown>> extends EventEmitter {
-	private opts: Opts<storedValueType>;
-	private objectCache: LRUCache<string, storedValueType>;
-	private client: ReturnType<(typeof createClient)>;
-	private subscriber: ReturnType<(typeof createClient)>;
-	private genKeyFromMsg: GenKeyFromMsg;
-	private valueTransformer: ValueTransformer<storedValueType>;
-	private additionalValueFetchMethod: AdditionalValueFetchMethode<storedValueType> | undefined;
-	private redisGetOpts: RedisGetOpts;
-	private fetchOnMessage = false;
+export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonNullable<unknown>> extends EventEmitter<Events> {
+	private readonly opts: Opts<storedValueType>;
+	private readonly valueCache: LRUCache<string, storedValueType>;
+	private readonly client: ReturnType<(typeof createClient)>;
+	private readonly subscriber: ReturnType<(typeof createClient)>;
+	private readonly genKeyFromMsg: GenKeyFromMsg;
+	private readonly deserialize: Deserialize<storedValueType> | Deserialize<storedValueType, Record<string, string>>;
+	private readonly fallbackFetchMethode: FallbackFetchMethode<storedValueType> | undefined;
+	private readonly redisGetOpts: RedisGetOpts;
+	private onMessageStrategy: "drop" | "refetch" | "fetchAlways" = "drop";
 	private clientConnected = false;
 	private subscriberConnected = false;
+	private listenersAdded = false;
+	private freeze = true;
 
 	constructor(opts: Opts<storedValueType>) {
 		super();
-		this.checkOpts(opts);
+		const checkedOpts = RedisValueCache.checkOpts<storedValueType>(opts);
 		// to be sure there are no changes later on
-		this.opts = cloneDeep(opts);
-		// create client and subscriber + add listeners
-		this.client = createClient(this.opts.redisClientOpts);
-		this.client.on("ready", () => {
-			this.clientConnected = true;
-			if (this.subscriberConnected === true) {
-				this.emit("ready");
-			}
-		});
-
-		this.client.on("end", () => {
-			this.clientConnected = false;
-			this.objectCache.clear();
-		});
-
-		this.client.on("error", (error: Error) => {
-			this.clientConnected = false;
-			this.objectCache.clear();
-			this.emit("error", error, "client");
-		});
-
+		this.opts = cloneDeep(checkedOpts);
+		// create client and subscriber
+		this.client = createClient(this.opts.redis.clientOpts);
 		this.subscriber = this.client.duplicate();
-
-		this.subscriber.on("ready", () => {
-			this.subscriberConnected = true;
-			if (this.clientConnected === true) {
-				this.emit("ready");
-			}
-		});
-
-		this.subscriber.on("end", () => {
-			this.subscriberConnected = false;
-			this.objectCache.clear();
-		});
-
-		this.subscriber.on("error", (error: Error) => {
-			this.subscriberConnected = false;
-			this.objectCache.clear();
-			this.emit("error", error, "subscriber");
-		});
 
 		// set other attributes
 		this.genKeyFromMsg = this.opts.genKeyFromMsg;
-		this.valueTransformer = this.opts.valueTransformer;
-		if (this.opts.additionalValueFetchMethod) {
-			this.additionalValueFetchMethod = this.opts.additionalValueFetchMethod;
+		this.deserialize = this.opts.deserialize;
+		if (this.opts.fallbackFetchMethod) {
+			this.fallbackFetchMethode = this.opts.fallbackFetchMethod;
 		}
-		this.redisGetOpts = this.opts.redisGetOpts;
-		if (this.opts.fetchOnMessage) {
-			this.fetchOnMessage = true;
+		this.redisGetOpts = this.opts.redis.getOpts;
+		if (this.opts.onMessageStrategy) {
+			this.onMessageStrategy = this.opts.onMessageStrategy;
 		}
-		this.objectCache = new LRUCache<string, storedValueType>({
+		this.valueCache = new LRUCache<string, storedValueType>({
 			max: this.opts.cacheMaxSize ?? 1000,
 			fetchMethod: async (key: string) => {
-				return await this.fetchMethode(key);
+				try {
+					return await this.fetchMethode(key);
+				} catch (error) {
+					this.errorHandler(error, { key });
+				}
+				// eslint-disable-next-line consistent-return
+				return;
 			}
 		});
+		if (this.opts.freeze === false) {
+			this.freeze = false;
+		}
+	}
+
+	/**
+	 * Creates a new RedisValueCache and calls the connect function before returning it.
+	 *
+	 * @static
+	 * @template storedValueType Type of the values you want to store
+	 * @param {Opts<storedValueType>} opts options to create a RedisValueCache
+	 * @memberof RedisValueCache
+	 */
+	public static async new<storedValueType extends NonNullable<unknown> = NonNullable<unknown>>(opts: Opts<storedValueType>) {
+		const rvc = new RedisValueCache<storedValueType>(opts);
+
+		await rvc.connect();
+
+		return rvc;
+	}
+
+	/**
+	 * Returns true if redis value cache is connected else returns false
+	 *
+	 * @memberof RedisValueCache
+	 */
+	public getConnected() {
+		return (this.clientConnected && this.subscriberConnected);
+	}
+
+	/**
+	 * Throws error if the redis value cache is not connected
+	 *
+	 * @private
+	 * @memberof RedisValueCache
+	 */
+	private assertConnected() {
+		if (!this.getConnected()) {
+			throw new Error("DISCONNECTED");
+		}
 	}
 
 	/**
@@ -160,18 +208,63 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	 * @memberof RedisObjectCache
 	 */
 	public async connect() {
+		if (!this.listenersAdded) {
+			this.client.on("ready", () => {
+				this.clientConnected = true;
+				if (this.subscriberConnected === true) {
+					this.emit("ready");
+				}
+			});
+
+			this.client.on("end", () => {
+				this.clientConnected = false;
+				// need to clear because of potential missed messages
+				this.valueCache.clear();
+			});
+
+			this.client.on("error", (error: Error) => {
+				this.clientConnected = false;
+				// need to clear because of potential missed messages
+				this.valueCache.clear();
+				this.emit("error", error, "client");
+			});
+
+
+			this.subscriber.on("ready", () => {
+				this.subscriberConnected = true;
+				if (this.clientConnected === true) {
+					this.emit("ready");
+				}
+			});
+
+			this.subscriber.on("end", () => {
+				this.subscriberConnected = false;
+				// need to clear because of potential missed messages
+				this.valueCache.clear();
+			});
+
+			this.subscriber.on("error", (error: Error) => {
+				this.subscriberConnected = false;
+				// need to clear because of potential missed messages
+				this.valueCache.clear();
+				this.emit("error", error, "subscriber");
+			});
+
+			this.listenersAdded = true;
+		}
+
 		if (this.clientConnected === false) {
 			await this.client.connect();
 		}
 
 		if (this.subscriberConnected === false) {
 			await this.subscriber.connect();
-			if (this.opts.redisChannelOpts.type === "pSubscribe") {
-				await this.subscriber.pSubscribe(this.opts.redisChannelOpts.name, async (message) => {
+			if (this.opts.redis.channelOpts.type === "pSubscribe") {
+				await this.subscriber.pSubscribe(this.opts.redis.channelOpts.name, async (message) => {
 					await this.onMessage(message);
 				});
 			} else {
-				await this.subscriber.subscribe(this.opts.redisChannelOpts.name, async (message) => {
+				await this.subscriber.subscribe(this.opts.redis.channelOpts.name, async (message) => {
 					await this.onMessage(message);
 				});
 
@@ -182,21 +275,19 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	/**
 	 * Funktion to get the value for the specific key.
 	 * Uses the lru cache fetch function.
-	 * Returns a copy of the Object if defined in the opts otherwise returns a reference.
 	 * Returns undefined if no value was found.
-	 * Can only be used if connected
+	 * Can only be used if connected.
+	 * Returns a copy of the Object if defined in the opts otherwise returns a reference.
 	 *
 	 * @param {string} key key you want to look up
 	 * @param {GetOpts} opts options for getting values
 	 * @memberof RedisObjectCache
 	 */
 	public async get(key: string, opts?: GetOpts) {
-		if (!(this.clientConnected && this.subscriberConnected)) {
-			throw new Error("DISCONNECTED");
-		}
+		this.assertConnected();
 
 		try {
-			const savedValue = await this.objectCache.fetch(key);
+			const savedValue = await this.valueCache.fetch(key);
 
 			if (opts?.clone) {
 				const value = cloneDeep(savedValue);
@@ -204,7 +295,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 			}
 			return savedValue;
 		} catch (error) {
-			this.handleError(error);
+			this.errorHandler(error, { key });
 		}
 
 		// eslint-disable-next-line consistent-return
@@ -235,25 +326,27 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	 * @memberof RedisObjectCache
 	 */
 	public async quit() {
-		if (!(this.clientConnected && this.subscriberConnected)) {
-			throw new Error("DISCONNECTED");
-		}
+		this.assertConnected();
 
-		await this.subscriber.quit();
-		await this.client.quit();
+		const results = await Promise.allSettled([this.subscriber.quit(), this.client.quit()]);
+
+		if (results[0].status === "rejected") {
+			this.emit("error", new Error("CLIENT_FAILED_TO_QUIT"), "subscriber");
+		}
+		if (results[1].status === "rejected") {
+			this.emit("error", new Error("CLIENT_FAILED_TO_QUIT"), "client");
+		}
 	}
 
 	/**
-	 * Function that deletes a value from the cache and returns a boolean whether there was an entry in the cache or not
+	 * Function that deletes a value from the cache. Returns true if value was in the cache, false if it was not.
 	 *
 	 * @param key key you want to remove
 	 * @memberof RedisValueCache
 	 */
 	public delete(key: string) {
-		if (!(this.clientConnected && this.subscriberConnected)) {
-			throw new Error("DISCONNECTED");
-		}
-		const wasInCache = this.objectCache.delete(key);
+		this.assertConnected();
+		const wasInCache = this.valueCache.delete(key);
 		return wasInCache;
 	}
 
@@ -264,13 +357,13 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	 * @param {unknown} error
 	 * @memberof RedisObjectCache
 	 */
-	private handleError(error: unknown) {
-		if (!this.opts.handleErrors || this.opts.handleErrors === "warn") {
+	private errorHandler(error: unknown, ctx: {msg: string} | {key: string}) {
+		if (!this.opts.errorHandlerStrategy || this.opts.errorHandlerStrategy === "warn") {
 			console.warn(error);
-		} else if (this.opts.handleErrors === "throw") {
+		} else if (this.opts.errorHandlerStrategy === "throw") {
 			throw error;
-		} else if (this.opts.handleErrors === "emit") {
-			this.emit("unexpectedError", error);
+		} else if (this.opts.errorHandlerStrategy === "emit") {
+			this.emit("unexpectedError", error, ctx);
 		}
 	}
 
@@ -282,18 +375,37 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	 * @memberof RedisValueCache
 	 */
 	private async onMessage(msg: string) {
-		try {
-			const key = this.genKeyFromMsg(msg);
+		// if for whatever reason client is disconnected but subscriber is not (should not happen) take this for safety
+		if (this.clientConnected) {
+			let key: string | null | undefined;
+			try {
+				key = this.genKeyFromMsg(msg);
+
+			} catch (error) {
+				this.errorHandler(error, { msg });
+			}
 			if (key !== null && key !== undefined) {
-				// delete key to be sure that if there are gets on the key in the meantime we only get the correct version
-				this.objectCache.delete(key);
-				// if for whatever reason client is disconnected but subscriber is not (should not happen) also check if key actually should be fetched
-				if (this.clientConnected && this.fetchOnMessage) {
-					await this.objectCache.fetch(key);
+				// delete key and find out if value was in cache
+				const wasInCache = this.valueCache.delete(key);
+				if (this.onMessageStrategy === "drop") {
+					if (wasInCache) {
+						this.emit("dropped", key);
+					}
+					return;
+				}
+
+				if (this.onMessageStrategy === "refetch" && !wasInCache) {
+					return;
+				}
+
+				await this.valueCache.fetch(key);
+
+				if (this.onMessageStrategy === "refetch" && wasInCache) {
+					this.emit("refetched", key);
+				} else {
+					this.emit("fetched", key);
 				}
 			}
-		} catch (error) {
-			this.handleError(error);
 		}
 	}
 
@@ -306,7 +418,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	 * @memberof RedisValueCache
 	 */
 	private async fetchMethode(key: string) {
-		let redisValue: unknown;
+		let redisValue: string | undefined | null | Record<string, string>;
 
 		switch (this.redisGetOpts.type) {
 			case "HGET": {
@@ -326,21 +438,28 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 			}
 		}
 
-		let value = this.valueTransformer(redisValue);
-		if (value === null || value === undefined) {
-			if (this.additionalValueFetchMethod) {
-				try {
-					value = await this.additionalValueFetchMethod(key);
-					if (value !== null && value !== undefined) {
-						return value;
-					}
-				} catch (error) {
-					this.handleError(error);
-				}
+		let value: storedValueType | null | undefined;
+		if (redisValue) {
+			// @ts-expect-error the deserialize should be typed correctly according to which getOption was selected see Opts type
+			value = this.deserialize(redisValue, key);
+		}
+
+		if ((value === null || value === undefined) && this.fallbackFetchMethode) {
+			try {
+				value = await this.fallbackFetchMethode(key);
+			} catch (error) {
+				this.errorHandler(error, { key });
 			}
-			// eslint-disable-next-line consistent-return
+		}
+
+		if (value === null || value === undefined) {
 			return;
 		}
+
+		if (!Object.isFrozen(value) && this.freeze) {
+			deepFreeze(value);
+		}
+
 		// eslint-disable-next-line consistent-return
 		return value;
 	}
@@ -354,76 +473,212 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	 * @param {unknown} opts
 	 * @memberof RedisObjectCache
 	 */
-	private checkOpts(opts: unknown) {
+	private static checkOpts<storedValueType extends NonNullable<unknown> = NonNullable<unknown>>(opts: unknown) {
 		if (!opts) {
 			throw new Error("OPTS_MISSING");
 		}
 		if (typeof opts !== "object") {
 			throw new TypeError("OPTS_NOT_AN_OBJECT");
 		}
-		if ("cacheMaxSize" in opts && typeof opts.cacheMaxSize !== "number") {
-			throw new TypeError("CACHE_MAX_SIZE_TYPE_MISMATCH");
+
+		let cacheMaxSize: number|undefined;
+
+		if ("cacheMaxSize" in opts) {
+			if (typeof opts.cacheMaxSize === "number") {
+				cacheMaxSize = opts.cacheMaxSize;
+			} else {
+				throw new TypeError("OPTS_CACHE_MAX_SIZE_TYPE_MISMATCH");
+			}
 		}
-		if (!("redisChannelOpts" in opts) || !opts.redisChannelOpts) {
-			throw new Error("REDIS_CHANNEL_OPTS_MISSING");
+
+		let errorHandlerStrategy: "emit" | "warn" | "ignore" | "throw" | undefined;
+		if (
+			"errorHandlerStrategy" in opts
+		) {
+			if (opts.errorHandlerStrategy === "emit" || opts.errorHandlerStrategy === "warn" || opts.errorHandlerStrategy === "ignore" || opts.errorHandlerStrategy === "throw") {
+				errorHandlerStrategy = opts.errorHandlerStrategy;
+			} else {
+				throw new Error("OPTS_HANDLE_ERRORS_INVALID");
+			}
 		}
-		if (typeof opts.redisChannelOpts !== "object") {
-			throw new TypeError("REDIS_CHANNEL_OPTS_TYPE_MISMATCH");
+
+		let onMessageStrategy: "drop" | "refetch" | "fetchAlways" | undefined;
+
+		if ("onMessageStrategy" in opts) {
+			if (opts.onMessageStrategy === "drop" || opts.onMessageStrategy === "refetch" || opts.onMessageStrategy === "fetchAlways") {
+				onMessageStrategy = opts.onMessageStrategy;
+			} else {
+				throw new Error("OPTS_FETCH_ON_MESSAGE_INVALID");
+			}
+		}
+
+		let fallbackFetchMethod: FallbackFetchMethode<storedValueType> | undefined;
+		if ("fallbackFetchMethod" in opts) {
+			if (typeof opts.fallbackFetchMethod === "function") {
+				fallbackFetchMethod = opts.fallbackFetchMethod as FallbackFetchMethode<storedValueType>;
+			} else {
+				throw new TypeError("OPTS_FALL_BACK_FETCH_METHOD_INVALID");
+			}
+		}
+
+		let freeze = true;
+		if ("freeze" in opts) {
+			if (typeof opts.freeze !== "boolean") {
+				throw new TypeError("OPTS_FREEZE_TYPE_MISMATCH");
+			}
+			if (opts.freeze === false) {
+				freeze = false;
+			}
+		}
+
+		if (!("genKeyFromMsg" in opts)) {
+			throw new Error("OPTS_GEN_KEY_FROM_MSG_MISSING");
+		}
+
+		if (typeof opts.genKeyFromMsg !== "function") {
+			throw new TypeError("OPTS_GEN_KEY_FROM_MSG_INVALID");
+		}
+
+		if (!("deserialize" in opts) || !opts.deserialize) {
+			throw new Error("OPTS_DESERIALIZE_MISSING");
+		}
+		if (typeof opts.deserialize !== "function") {
+			throw new TypeError("OPTS_DESERIALIZE_TYPE_MISMATCH");
+		}
+
+		if (!("redis" in opts)) {
+			throw new Error("OPTS_REDIS_MISSING");
+		}
+
+		if (typeof opts.redis !== "object" || !opts.redis) {
+			throw new TypeError("OPTS_REDIS_TYPE_MISMATCH");
+		}
+
+		if (!("channelOpts" in opts.redis) || !opts.redis.channelOpts) {
+			throw new Error("OPTS_REDIS_CHANNEL_OPTS_MISSING");
+		}
+		if (typeof opts.redis.channelOpts !== "object") {
+			throw new TypeError("OPTS_REDIS_CHANNEL_OPTS_TYPE_MISMATCH");
 		}
 		if (!(
-			"type" in opts.redisChannelOpts
-			&& "name" in opts.redisChannelOpts
-			&& (opts.redisChannelOpts.type === "subscribe" || opts.redisChannelOpts.type === "pSubscribe")
-			&& typeof opts.redisChannelOpts.name === "string"
+			"type" in opts.redis.channelOpts
+			&& "name" in opts.redis.channelOpts
+			&& (opts.redis.channelOpts.type === "subscribe" || opts.redis.channelOpts.type === "pSubscribe")
+			&& typeof opts.redis.channelOpts.name === "string"
 		)) {
-			throw new TypeError("REDIS_CHANNEL_OPTS_TYPE_INVALID");
-		}
-		if (!("redisClientOpts" in opts) || !opts.redisClientOpts) {
-			throw new Error("REDIS_CLIENT_OPTS_MISSING");
-		}
-		if (typeof opts.redisClientOpts !== "object") {
-			throw new TypeError("REDIS_CLIENT_OPTS_TYPE_MISMATCH");
-		}
-		if (!("redisGetOpts" in opts) || !opts.redisGetOpts) {
-			throw new Error("FETCH_OPTIONS_MISSING");
-		}
-		if (typeof opts.redisGetOpts !== "object") {
-			throw new TypeError("FETCH_OPTIONS_TYPE_MISMATCH");
-		}
-		if (!("type" in opts.redisGetOpts)
-			|| !(opts.redisGetOpts.type === "HGET"
-			|| opts.redisGetOpts.type === "HGETALL"
-			|| opts.redisGetOpts.type === "GET")) {
-			throw new Error("FETCH_OPTIONS_TYPE_INVALID");
+			throw new TypeError("OPTS_REDIS_CHANNEL_OPTS_TYPE_INVALID");
 		}
 
-		if (opts.redisGetOpts.type === "HGET" && !("argument" in opts.redisGetOpts && typeof opts.redisGetOpts.argument === "string")) {
-			throw new Error("FETCH_OPTIONS_ARGUMENT_INVALID");
+		let clientOpts: RedisClientOptions|undefined;
+		if (("clientOpts" in opts.redis)) {
+			if (!opts.redis.clientOpts) {
+				throw new Error("OPTS_REDIS_CLIENT_OPTS_IS_NULL");
+			}
+			if (typeof opts.redis.clientOpts !== "object") {
+				throw new TypeError("OPTS_REDIS_CLIENT_OPTS_TYPE_MISMATCH");
+			}
+			clientOpts = opts.redis.clientOpts;
 		}
 
-		if (!("genKeyFromMsg" in opts) || !opts.genKeyFromMsg) {
-			throw new Error("GEN_KEY_FROM_MESSAGE_MISSING");
+		if (!("getOpts" in opts.redis) || !opts.redis.getOpts) {
+			throw new Error("OPTS_REDIS_FETCH_OPTIONS_MISSING");
 		}
-		if (typeof opts.genKeyFromMsg !== "function") {
-			throw new TypeError("GEN_KEY_FROM_MESSAGE_TYPE_MISMATCH");
+		if (typeof opts.redis.getOpts !== "object") {
+			throw new TypeError("OPTS_REDIS_FETCH_OPTIONS_TYPE_MISMATCH");
 		}
-		if (!("valueTransformer" in opts) || !opts.valueTransformer) {
-			throw new Error("REDIS_VALUE_TRANSFORMER_MISSING");
+		if (!("type" in opts.redis.getOpts)
+			|| !(opts.redis.getOpts.type === "HGET"
+			|| opts.redis.getOpts.type === "HGETALL"
+			|| opts.redis.getOpts.type === "GET")) {
+			throw new Error("OPTS_REDIS_FETCH_OPTIONS_TYPE_INVALID");
 		}
-		if (typeof opts.valueTransformer !== "function") {
-			throw new TypeError("REDIS_VALUE_TRANSFORMER_TYPE_MISMATCH");
+
+		let checkedOpts: Opts<storedValueType>;
+
+		if (opts.redis.getOpts.type === "GET" || opts.redis.getOpts.type === "HGET") {
+			let getOpts: RedisGetOpts;
+
+			if (opts.redis.getOpts.type === "HGET") {
+				if (!("argument" in opts.redis.getOpts && typeof opts.redis.getOpts.argument === "string")) {
+					throw new Error("OPTS_REDIS_FETCH_OPTIONS_ARGUMENT_INVALID");
+				}
+				getOpts = {
+					type: opts.redis.getOpts.type,
+					argument: opts.redis.getOpts.argument
+				};
+			} else {
+				getOpts = {
+					type: opts.redis.getOpts.type
+				};
+			}
+
+			checkedOpts = {
+				redis: {
+					getOpts,
+					clientOpts,
+					channelOpts: {
+						type: opts.redis.channelOpts.type,
+						name: opts.redis.channelOpts.name
+					}
+				},
+				cacheMaxSize,
+				fallbackFetchMethod,
+				genKeyFromMsg: opts.genKeyFromMsg as GenKeyFromMsg,
+				onMessageStrategy,
+				errorHandlerStrategy: errorHandlerStrategy,
+				deserialize: opts.deserialize as Deserialize<storedValueType>,
+				freeze
+			};
+
+		} else {
+			checkedOpts = {
+				redis: {
+					getOpts: {
+						type: opts.redis.getOpts.type
+					},
+					clientOpts,
+					channelOpts: {
+						type: opts.redis.channelOpts.type,
+						name: opts.redis.channelOpts.name
+					}
+				},
+				cacheMaxSize,
+				fallbackFetchMethod,
+				genKeyFromMsg: opts.genKeyFromMsg as GenKeyFromMsg,
+				onMessageStrategy,
+				errorHandlerStrategy: errorHandlerStrategy,
+				deserialize: opts.deserialize as Deserialize<storedValueType, Record<string, string>>,
+				freeze
+			};
 		}
-		if (
-			"handleErrors" in opts
-			&& !(opts.handleErrors === "emit" || opts.handleErrors === "warn" || opts.handleErrors === "ignore" || opts.handleErrors === "throw")
-		) {
-			throw new Error("HANDLE_ERRORS_INVALID");
-		}
-		if ("additionalValueFetchMethod" in opts && typeof opts.additionalValueFetchMethod !== "function") {
-			throw new Error("ADDITIONAL_VALUE_FETCH_METHOD_INVALID");
-		}
-		if ("fetchOnMessage" in opts && typeof opts.fetchOnMessage !== "boolean") {
-			throw new Error("FETCH_ON_MESSAGE_INVALID");
-		}
+
+		return checkedOpts;
 	}
 }
+
+function deepFreeze<T>(o: T): T {
+	Object.freeze(o);
+
+	const oIsFunction = typeof o === "function";
+	// eslint-disable-next-line @typescript-eslint/unbound-method
+	const hasOwnProp = Object.prototype.hasOwnProperty;
+
+	for (const prop of Object.getOwnPropertyNames(o)) {
+		if (
+			hasOwnProp.call(o, prop)
+		&& (oIsFunction
+			? prop !== "caller" && prop !== "callee" && prop !== "arguments"
+			: true)
+		&& o[prop as keyof T] !== null
+		&& (typeof o[prop as keyof T] === "object"
+		|| typeof o[prop as keyof T] === "function")
+		&& !Object.isFrozen(o[prop as keyof T])
+		) {
+			deepFreeze(o[prop as keyof T]);
+		}
+	}
+
+	return o;
+}
+
+export { type RedisClientOptions } from "redis";

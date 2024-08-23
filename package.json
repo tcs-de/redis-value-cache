@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "",
   "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build:ts": "tsc",
@@ -17,7 +18,7 @@
     "pub/sub"
   ],
   "devDependencies": {
-    "@types/lodash.clonedeep": "^4.5.9",
+    "@types/lodash": "^4.17.7",
     "@types/node": "^22.2.0",
     "@typescript-eslint/eslint-plugin": "^6.5.0",
     "eslint": "8.52.0",
@@ -28,7 +29,7 @@
     "typescript-eslint": "^0.0.1-alpha.0"
   },
   "dependencies": {
-    "lodash.clonedeep": "^4.5.0",
+    "lodash": "^4.17.21",
     "lru-cache": "^11.0.0",
     "redis": "^4.7.0"
   }
