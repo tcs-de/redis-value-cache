@@ -33,6 +33,7 @@ Key Features:
 
 * `redis`: Options connected to Redis
 	* `redis.clientOpts` (Optional): Options for the node-redis client ([details](https://github.com/redis/node-redis/blob/master/docs/client-configuration.md)). Used for both `subscriber` and `client`.
+	* `redis.client` (Optional): Redis client to duplicate for both subscriber and client. Will be prioritized over `redis.clientOpts` if both are provided.
 	* `redis.channelOpts`: Options whether the `subscriber` should pSubscribe or subscribe normally.
 	* `redis.getOpts`: Options on how the data should be retrieved from redis. Supported options `GET`, `HGET` and `HGETALL`.
 * `genKeyFromMsg`: Function that takes a message and returns a key that needs to get updated. The return must be a string.
@@ -130,6 +131,7 @@ await rvc.quit();
 
 ```ts 
 import { RedisValueCache } from "redis-value-cache";
+import { createClient } from "redis";
 
 interface msgType {
 	id: number;
@@ -142,15 +144,16 @@ interface storedObjectType {
 	data: Record<string, unknown>;
 }
 
+const redisClient = createClient({
+	socket: {
+		host: "localhost",
+		port: 6379
+	}
+});
+
 const opts: Opts<storedObjectType> = {
 	redis: {
-		// client options for node-redis client
-		clientOpts: {
-			socket: {
-				host: "localhost",
-				port: 6379
-			}
-		},
+		client: redisClient,
 		// options to subscribe / psubscribe
 		channelOpts: {
 			type: "pSubscribe"
@@ -321,3 +324,10 @@ For the `fallbackFetchMethod`, this means that no value was found.
 
 Trowing an error in these functions behaves similarly except if you choose `"throw"` for the `errorHandlerStrategy` option.
 Another option instead of throwing an error is to log/handle the errors in your function and then just return `null` or `undefined`.
+
+## Problems With Freeze
+
+If you decide to cache values that are JavaScript `Set` or `Map` objects, the objects stored inside the `Set`/`Map` will not be frozen.
+There might be other types of data structures where this is also the case.
+
+A workaround would be to freeze your objects before putting them in other data structures.

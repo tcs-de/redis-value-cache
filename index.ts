@@ -46,31 +46,32 @@ export interface Events {
 /**
  * options for the constructor of the redis object cache.
  *
- * @property redis: Options concerning the direct redis communication.
- * * redis.clientOpts: Options for the redis connection. Will be used for client and subscriber(client.duplicate()).
- * * redis.channelOpts: Make the subscriber subscribe to 1 channel or pSubscribe to multiple channels.
- * * redis.getOpts: Options for wich method the client should use when fetching data from redis
- * @property genKeyFromMsg:
+ * @property `redis`: Options concerning the direct redis communication.
+ * * `redis.clientOpts` (Optional): Options for the redis connection. Will be used for client and subscriber(client.duplicate()).
+ * * `redis.client` (Optional): Redis client to duplicate for client and subscriber.
+ * * `redis.channelOpts`: Make the subscriber subscribe to 1 channel or pSubscribe to multiple channels.
+ * * `redis.getOpts`: Options for wich method the client should use when fetching data from redis
+ * @property `genKeyFromMsg`:
  * Function that takes a message that was send over the redis channel and returns a key that needs to be updated.\
  * Return null to ignore message.\
  * This function must not be async.
- * @property deserialize:
+ * @property `deserialize`:
  * Function that takes a value returned from redis and returns a value to be cached\
  * Return null to ignore value.\
  * This function must not be async.
- * @property cacheMaxSize (Optional): Max number of Objects to store in the lru-cache (Default = 1000).
- * @property errorHandlerStrategy: Opts how to handle Error.
+ * @property `cacheMaxSize` (Optional): Max number of Objects to store in the lru-cache (Default = 1000).
+ * @property `errorHandlerStrategy`: Opts how to handle Error.
  * * "warn" (Default): console.warn(error);
  * * "ignore": // do nothing
  * * "throw": throw error;
  * * "emit": this.emit("unexpectedError", error);
- * @property fallbackFetchMethod: Optional function to be called in case a key can not be found in redis.\
+ * @property `fallbackFetchMethod`: Optional function to be called in case a key can not be found in redis.\
  * This means the function is called if a the redisValueTransformer function returns null;
- * @property onMessageStrategy (Optional): Options for how the RedisValueCache should behave once it receives a message.
+ * @property `onMessageStrategy` (Optional): Options for how the RedisValueCache should behave once it receives a message.
  * * "drop" (Default): The value will be deleted from the cache.
  * * "refetch": If a value was already the cache the updated value will be fetched.
  * * "fetchAlways": The updated value will always be fetched even if it was not in the cache before.
- * @property freezeObjects (Optional): Whether or not to freeze values when they are cached.
+ * @property `freezeObjects` (Optional): Whether or not to freeze values when they are cached.
  *
  * @interface Opts
  * @template storedValueType type of the values you want to store.
@@ -78,6 +79,7 @@ export interface Events {
 export type Opts<storedValueType> = {
 	redis: {
 		clientOpts?: RedisClientOptions;
+		client?: ReturnType<(typeof createClient)>;
 		channelOpts: RedisChannelOpts;
 		getOpts: RedisGet | RedisHget;
 	};
@@ -91,6 +93,7 @@ export type Opts<storedValueType> = {
 } | {
 	redis: {
 		clientOpts?: RedisClientOptions;
+		client?: ReturnType<(typeof createClient)>;
 		channelOpts: RedisChannelOpts;
 		getOpts: RedisHgetall;
 	};
@@ -131,10 +134,13 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	constructor(opts: Opts<storedValueType>) {
 		super();
 		const checkedOpts = RedisValueCache.checkOpts<storedValueType>(opts);
-		// to be sure there are no changes later on
-		this.opts = cloneDeep(checkedOpts);
+		this.opts = checkedOpts;
 		// create client and subscriber
-		this.client = createClient(this.opts.redis.clientOpts);
+		if (this.opts.redis.client) {
+			this.client = this.opts.redis.client.duplicate();
+		} else {
+			this.client = createClient(this.opts.redis.clientOpts);
+		}
 		this.subscriber = this.client.duplicate();
 
 		// set other attributes
@@ -492,9 +498,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 		}
 
 		let errorHandlerStrategy: "emit" | "warn" | "ignore" | "throw" | undefined;
-		if (
-			"errorHandlerStrategy" in opts
-		) {
+		if ("errorHandlerStrategy" in opts) {
 			if (opts.errorHandlerStrategy === "emit" || opts.errorHandlerStrategy === "warn" || opts.errorHandlerStrategy === "ignore" || opts.errorHandlerStrategy === "throw") {
 				errorHandlerStrategy = opts.errorHandlerStrategy;
 			} else {
@@ -580,6 +584,16 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 			clientOpts = opts.redis.clientOpts;
 		}
 
+		let client: ReturnType<(typeof createClient)> | undefined;
+
+		if ("client" in opts.redis && opts.redis.client) {
+			// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+			if (!(opts.redis.client.constructor && opts.redis.client.constructor.name === "Commander")) {
+				throw new TypeError("OPTS_REDIS_CLIENT_INVALID");
+			}
+			client = opts.redis.client as ReturnType<(typeof createClient)>;
+		}
+
 		if (!("getOpts" in opts.redis) || !opts.redis.getOpts) {
 			throw new Error("OPTS_REDIS_FETCH_OPTIONS_MISSING");
 		}
@@ -616,6 +630,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 				redis: {
 					getOpts,
 					clientOpts,
+					client,
 					channelOpts: {
 						type: opts.redis.channelOpts.type,
 						name: opts.redis.channelOpts.name
@@ -637,6 +652,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 						type: opts.redis.getOpts.type
 					},
 					clientOpts,
+					client,
 					channelOpts: {
 						type: opts.redis.channelOpts.type,
 						name: opts.redis.channelOpts.name
