@@ -5,4 +5,13 @@
 .eslintrc
 index.ts
 test/
+dist/test/
 tsconfig.json
+jest.config.ts
+jest.setup.redis-mock.ts
+diagrams/
+dist/jest.setup.redis-mock.d.ts
+dist/jest.setup.redis-mock.js
+jest.config.js
+dist/redisV4Mock.js
+dist/redisV4Mock.d.ts

@@ -8,7 +8,7 @@ module.exports = {
 		es2023: true
 	},
 	parser: "@typescript-eslint/parser",
-	ignorePatterns: [".eslintrc.*", "dist/*"],
+	ignorePatterns: [".eslintrc.*", "dist/*", "jest.config.js","jest.setup.*"],
 	parserOptions: {
 		project: "./tsconfig.json",
 		sourceType: "module",
