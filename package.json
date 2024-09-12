@@ -30,6 +30,10 @@
     "typescript": "^5.2.2",
     "typescript-eslint": "^0.0.1-alpha.0"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/de3lo/redis-value-cache.git"
+  },
   "dependencies": {
     "lodash": "^4.17.21",
     "lru-cache": "^11.0.0",

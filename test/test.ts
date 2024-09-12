@@ -181,7 +181,7 @@ describe("fall back fetch Method", () => {
 
 		await rvc.quit();
 	});
-	test("if fall back fetch method returns no value no value is cached", async () => {
+	test("if fall back fetch method returns no value, nothing is cached", async () => {
 		const nullTestFallback = jest.fn(() => { return null; });
 		const nullTestDeserialize = jest.fn(() => { return null; });
 
