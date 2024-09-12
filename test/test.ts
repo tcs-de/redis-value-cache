@@ -56,9 +56,9 @@ describe("create Redis value caches with different options and read 1 value", ()
 
 		const value = await rvc.get("key1");
 
+		await rvc.quit();
 		expect(value).toBe("value1");
 
-		await rvc.quit();
 	});
 
 	test(".new() create with HGet Option", async () => {
@@ -84,9 +84,9 @@ describe("create Redis value caches with different options and read 1 value", ()
 
 		const value = await rvc.get("key6");
 
+		await rvc.disconnect();
 		expect(value).toEqual({ value: 6, info: "Info 1" });
 
-		await rvc.disconnect();
 	});
 
 	test("pass client into create with HGetAll", async () => {
@@ -120,9 +120,9 @@ describe("create Redis value caches with different options and read 1 value", ()
 
 		const value = await rvc.get("key7");
 
+		await rvc.quit();
 		expect(value).toEqual({ object: { value: 7, info: "Info 2" }, type: "object" });
 
-		await rvc.quit();
 	});
 });
 
@@ -140,9 +140,8 @@ describe("fall back fetch Method", () => {
 		await rvc.get("key4");
 		await rvc.get("key5");
 
-		expect(testFallback.mock.calls).toHaveLength(0);
-
 		await rvc.quit();
+		expect(testFallback.mock.calls).toHaveLength(0);
 	});
 	test("fall back fetch Methode is used if no value is found", async () => {
 		testFallback.mockClear();
@@ -158,9 +157,8 @@ describe("fall back fetch Method", () => {
 		await rvc.get("nonexistentKey4");
 		await rvc.get("nonexistentKey5");
 
-		expect(testFallback.mock.calls).toHaveLength(5);
-
 		await rvc.quit();
+		expect(testFallback.mock.calls).toHaveLength(5);
 	});
 	test("fall back fetch Methode is used if deserialize returns null/undefined", async () => {
 		testFallback.mockClear();
@@ -177,18 +175,19 @@ describe("fall back fetch Method", () => {
 		await rvc.get("key4");
 		await rvc.get("key5");
 
-		expect(testFallback.mock.calls).toHaveLength(5);
-
 		await rvc.quit();
+		expect(testFallback.mock.calls).toHaveLength(5);
 	});
-	test("if fall back fetch method returns no value, nothing is cached", async () => {
-		const nullTestFallback = jest.fn(() => { return null; });
+
+	test("if cacheFallbackValue is false, no values from fallbackFetchMethod are cached", async () => {
+		const nullTestFallback = jest.fn(() => { return "ANYTHING"; });
 		const nullTestDeserialize = jest.fn(() => { return null; });
 
 		const rvc = await RedisValueCache.new<string>({
 			...defaultOptsString,
 			fallbackFetchMethod: nullTestFallback as unknown as FallbackFetchMethode<string>,
-			deserialize: nullTestDeserialize
+			deserialize: nullTestDeserialize,
+			cacheFallbackValues: false
 		});
 
 		await rvc.get("key1");
@@ -203,12 +202,75 @@ describe("fall back fetch Method", () => {
 		await rvc.get("key4");
 		await rvc.get("key5");
 
+		await rvc.quit();
 		expect(nullTestFallback.mock.calls).toHaveLength(10);
 		expect(nullTestDeserialize.mock.calls).toHaveLength(10);
 
-		await rvc.quit();
 	});
+
+	test("if cacheFallbackValue is true, values from fallbackFetchMethod are cached", async () => {
+		const nullTestFallback = jest.fn(async () => {
+			await setTimeout(1);
+			return "ANYTHING";
+		});
+		const nullTestDeserialize = jest.fn(() => { return null; });
+
+		const rvc = await RedisValueCache.new<string>({
+			...defaultOptsString,
+			fallbackFetchMethod: nullTestFallback as unknown as FallbackFetchMethode<string>,
+			deserialize: nullTestDeserialize,
+			cacheFallbackValues: true
+		});
+
+		await rvc.get("key1");
+		await rvc.get("key2");
+		await rvc.get("key3");
+		await rvc.get("key4");
+		await rvc.get("key5");
+
+		await rvc.get("key1");
+		await rvc.get("key2");
+		await rvc.get("key3");
+		await rvc.get("key4");
+		await rvc.get("key5");
+
+		await rvc.quit();
+		expect(nullTestDeserialize.mock.calls).toHaveLength(5);
+		expect(nullTestFallback.mock.calls).toHaveLength(5);
+
+	});
+
+	test("if fall back fetch method returns no value, nothing is cached", async () => {
+		const nullTestFallback = jest.fn(() => { return null; });
+		const nullTestDeserialize = jest.fn(() => { return null; });
+
+		const rvc = await RedisValueCache.new<string>({
+			...defaultOptsString,
+			fallbackFetchMethod: nullTestFallback as unknown as FallbackFetchMethode<string>,
+			deserialize: nullTestDeserialize,
+			cacheFallbackValues: true
+		});
+
+		await rvc.get("key1");
+		await rvc.get("key2");
+		await rvc.get("key3");
+		await rvc.get("key4");
+		await rvc.get("key5");
+
+		await rvc.get("key1");
+		await rvc.get("key2");
+		await rvc.get("key3");
+		await rvc.get("key4");
+		await rvc.get("key5");
+
+		await rvc.quit();
+		expect(nullTestFallback.mock.calls).toHaveLength(10);
+		expect(nullTestDeserialize.mock.calls).toHaveLength(10);
+
+	});
+
 });
+
 
 describe("caching", () => {
 	test("object is not fetched 2 times and the same object is returned", async () => {

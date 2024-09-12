@@ -102,9 +102,9 @@ export class Client extends EventEmitter {
 
 	public async GET(key: string) {
 		await setTimeout(1);
-		console.log("Get is called");
+		// console.log("Get is called");
 		const value = db[key];
-		console.log(value);
+		// console.log(value);
 		if (value && typeof value === "string") {
 			return value;
 		}

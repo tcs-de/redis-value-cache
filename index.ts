@@ -72,6 +72,7 @@ export interface Events {
  * * "refetch": If a value was already the cache the updated value will be fetched.
  * * "fetchAlways": The updated value will always be fetched even if it was not in the cache before.
  * @property `freezeObjects` (Optional): Whether or not to freeze values when they are cached.
+ * @property `cacheFallbackValues` (Optional): Whether or not values returned from the `fallbackFetchMethode` should be cached.
  *
  * @interface Opts
  * @template storedValueType type of the values you want to store.
@@ -90,6 +91,7 @@ export type Opts<storedValueType> = {
 	fallbackFetchMethod?: FallbackFetchMethode<storedValueType>;
 	onMessageStrategy?: "drop" | "refetch" | "fetchAlways";
 	freeze?: boolean;
+	cacheFallbackValues?: boolean;
 } | {
 	redis: {
 		clientOpts?: RedisClientOptions;
@@ -104,6 +106,7 @@ export type Opts<storedValueType> = {
 	fallbackFetchMethod?: FallbackFetchMethode<storedValueType>;
 	onMessageStrategy?: "drop" | "refetch" | "fetchAlways";
 	freeze?: boolean;
+	cacheFallbackValues?: boolean;
 };
 
 /**
@@ -123,13 +126,15 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	private readonly subscriber: ReturnType<(typeof createClient)>;
 	private readonly genKeyFromMsg: GenKeyFromMsg;
 	private readonly deserialize: Deserialize<storedValueType> | Deserialize<storedValueType, Record<string, string>>;
-	private readonly fallbackFetchMethode: FallbackFetchMethode<storedValueType> | undefined;
+	private readonly fallbackFetchMethod: FallbackFetchMethode<storedValueType> | undefined;
 	private readonly redisGetOpts: RedisGetOpts;
 	private onMessageStrategy: "drop" | "refetch" | "fetchAlways" = "drop";
 	private clientConnected = false;
 	private subscriberConnected = false;
 	private listenersAdded = false;
 	private freeze = true;
+	private cacheFallbackValues = false;
+	private promiseMap: Record<string, Promise<storedValueType | undefined> | undefined> = {};
 
 	constructor(opts: Opts<storedValueType>) {
 		super();
@@ -147,7 +152,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 		this.genKeyFromMsg = this.opts.genKeyFromMsg;
 		this.deserialize = this.opts.deserialize;
 		if (this.opts.fallbackFetchMethod) {
-			this.fallbackFetchMethode = this.opts.fallbackFetchMethod;
+			this.fallbackFetchMethod = this.opts.fallbackFetchMethod;
 		}
 		this.redisGetOpts = this.opts.redis.getOpts;
 		if (this.opts.onMessageStrategy) {
@@ -157,7 +162,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 			max: this.opts.cacheMaxSize ?? 1000,
 			fetchMethod: async (key: string) => {
 				try {
-					return await this.fetchMethode(key);
+					return await this.fetchMethod(key);
 				} catch (error) {
 					this.errorHandler(error, { key });
 				}
@@ -167,6 +172,9 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 		});
 		if (this.opts.freeze === false) {
 			this.freeze = false;
+		}
+		if (this.opts.cacheFallbackValues === true) {
+			this.cacheFallbackValues = true;
 		}
 	}
 
@@ -292,20 +300,29 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	public async get(key: string, opts?: GetOpts) {
 		this.assertConnected();
 
-		try {
-			const savedValue = await this.valueCache.fetch(key);
+		const previousAttempt = this.promiseMap[key];
 
-			if (opts?.clone) {
-				const value = cloneDeep(savedValue);
-				return value;
-			}
-			return savedValue;
-		} catch (error) {
-			this.errorHandler(error, { key });
+		let value: storedValueType| undefined;
+
+		if (previousAttempt) {
+			value = await previousAttempt;
+		} else {
+			const currentAttempt = this.fetch(key);
+
+			this.promiseMap[key] = currentAttempt;
+
+			value = await currentAttempt;
+
+			// eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+			delete this.promiseMap[key];
+		}
+
+		if (value && opts?.clone) {
+			value = cloneDeep(value);
 		}
 
 		// eslint-disable-next-line consistent-return
-		return;
+		return value;
 	}
 
 	/**
@@ -416,6 +433,41 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	}
 
 	/**
+	 * Functions that handles fetching of values from cache or with the fallback fetch method
+	 *
+	 * @private
+	 * @param {string} key
+	 * @memberof RedisValueCache
+	 */
+	private async fetch(key: string) {
+		this.assertConnected();
+
+		let savedValue: storedValueType | undefined | null;
+
+		try {
+			savedValue = await this.valueCache.fetch(key);
+		} catch (error) {
+			this.errorHandler(error, { key });
+		}
+
+		if (!savedValue && this.fallbackFetchMethod) {
+			try {
+				savedValue = await this.fallbackFetchMethod(key);
+			} catch (error) {
+				this.errorHandler(error, { key });
+			}
+			if (savedValue && this.cacheFallbackValues) {
+				this.valueCache.set(key, savedValue);
+			}
+		}
+		if (savedValue) {
+			return savedValue;
+		}
+		// eslint-disable-next-line consistent-return
+		return;
+	}
+
+	/**
 	 * Function called in the lru cache fetch function.
 	 * Contains main (complete) logic for fetching values.
 	 *
@@ -423,7 +475,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	 * @param {string} key key to fetch
 	 * @memberof RedisValueCache
 	 */
-	private async fetchMethode(key: string) {
+	private async fetchMethod(key: string) {
 		let redisValue: string | undefined | null | Record<string, string>;
 
 		switch (this.redisGetOpts.type) {
@@ -450,6 +502,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 			value = this.deserialize(redisValue, key);
 		}
 
+		/*
 		if ((value === null || value === undefined) && this.fallbackFetchMethode) {
 			try {
 				value = await this.fallbackFetchMethode(key);
@@ -457,6 +510,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 				this.errorHandler(error, { key });
 			}
 		}
+		*/
 
 		if (value === null || value === undefined) {
 			return;
@@ -532,6 +586,16 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 			}
 			if (opts.freeze === false) {
 				freeze = false;
+			}
+		}
+
+		let cacheFallbackValues = false;
+		if ("cacheFallbackValues" in opts) {
+			if (typeof opts.cacheFallbackValues !== "boolean") {
+				throw new TypeError("OPTS_CACHE_FALLBACK_VALUES_TYPE_MISMATCH");
+			}
+			if (opts.cacheFallbackValues === true) {
+				cacheFallbackValues = true;
 			}
 		}
 
@@ -642,7 +706,8 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 				onMessageStrategy,
 				errorHandlerStrategy: errorHandlerStrategy,
 				deserialize: opts.deserialize as Deserialize<storedValueType>,
-				freeze
+				freeze,
+				cacheFallbackValues
 			};
 
 		} else {
@@ -664,7 +729,8 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 				onMessageStrategy,
 				errorHandlerStrategy: errorHandlerStrategy,
 				deserialize: opts.deserialize as Deserialize<storedValueType, Record<string, string>>,
-				freeze
+				freeze,
+				cacheFallbackValues
 			};
 		}
 

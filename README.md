@@ -50,6 +50,7 @@ Key Features:
 	* `"refetch"`: If a value was already the cache the updated value will be fetched.
 	* `"fetchAlways"`: The updated value will always be fetched even if it was not in the cache before.
 * `freeze` (Optional): Whether or not to freeze values when they are cached (Default = true).
+* `cacheFallbackValues` (Optional): Whether or not values returned from the `fallbackFetchMethode` should be cached (Default = false).
 
 ## Usage (TypeScript)
 
