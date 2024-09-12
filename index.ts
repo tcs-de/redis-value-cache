@@ -457,6 +457,10 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 				this.errorHandler(error, { key });
 			}
 			if (savedValue && this.cacheFallbackValues) {
+				if (!Object.isFrozen(savedValue) && this.freeze) {
+					deepFreeze(savedValue);
+				}
+
 				this.valueCache.set(key, savedValue);
 			}
 		}
