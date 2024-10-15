@@ -2,7 +2,7 @@
 import { LRUCache } from "lru-cache";
 import type { RedisClientOptions } from "redis";
 import { createClient } from "redis";
-import cloneDeep from "lodash/clonedeep";
+import cloneDeep from "lodash/cloneDeep";
 import EventEmitter from "node:events";
 
 interface RedisHget {
