@@ -307,6 +307,14 @@ This function should not be used to often but can be used to force a refresh for
 
 Function returns true if both clients are connected, otherwise returns false.
 
+### .has("key")
+
+Function that returns `true` if a value for the `key` is in cache and `false` otherwise.
+
+Params: 
+
+* `key` (string): Key you want to check.
+
 ## Disconnects
 
 If a disconnect, whether wanted or unwanted, occurs, the cache is flushed since potential change messages could be missed.

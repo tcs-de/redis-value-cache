@@ -287,6 +287,16 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	}
 
 	/**
+	 * Function that returns true if a value for the key is in the cache and false otherwise
+	 *
+	 * @param {string} key key to check the value for
+	 * @memberof RedisValueCache
+	 */
+	public has(key: string) {
+		return this.valueCache.has(key);
+	}
+
+	/**
 	 * Funktion to get the value for the specific key.
 	 * Uses the lru cache fetch function.
 	 * Returns undefined if no value was found.
