@@ -36,7 +36,7 @@ Key Features:
 	* `redis.client` (Optional): Redis client to duplicate for both subscriber and client. Will be prioritized over `redis.clientOpts` if both are provided.
 	* `redis.channelOpts`: Options whether the `subscriber` should pSubscribe or subscribe normally.
 	* `redis.getOpts`: Options on how the data should be retrieved from redis. Supported options `GET`, `HGET` and `HGETALL`.
-* `genKeyFromMsg`: Function that takes a message and returns a key that needs to get updated. The return must be a string.
+* `genKeyFromMsg`: Function that takes a message and returns a key that needs to get updated or an object with the key and special RedisGetOpts. The key must be a string.
 * `deserialize`: Function that takes data retrieved from Redis and the key and returns a value that should be saved in the cache.
 * `cacheMaxSize` (Optional): Max number of objects to be stored in the LRU cache (Default = 1000).
 * `errorHandlerStrategy` (Optional): Options for how errors that happen when fetching data from redis should be handled.**Other errors will still be thrown disregarding this option**.
@@ -44,7 +44,7 @@ Key Features:
 	* `"warn"`: (Default): Uses `console.warn()` to print the error.
 	* `"throw"`: Throws the error.
 	* `"ignore"`: Ignores the error.
-* `fallbackFetchMethod` (Optional): Function that should be used to fetch data if the data aws not found in redis.
+* `fallbackFetchMethod` (Optional): Function that should be used to fetch data if the data was not found in redis.
 * `onMessageStrategy` (Optional): Options for how the RedisValueCache should behave once it receives a message.
 	* `"drop"` (Default): The value will be deleted from the cache.
 	* `"refetch"`: If a value was already the cache the updated value will be fetched.
@@ -270,6 +270,7 @@ Params:
 * `key` (string): Key of the value you want to look up.
 * `opts` (object | Optional): Options for the get function.
 	* `opts.clone` (boolean | Optional): Whether or not the value should be cloned before returning it.
+	* `redisGetOpts` (RedisGetOpts | Optional): To tell the rvc to use a different way to get the value from redis.
 
 #### Why Use The Clone Option?
 

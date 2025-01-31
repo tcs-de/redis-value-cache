@@ -24,7 +24,7 @@ export type RedisChannelOpts = {
 	name: string;
 };
 
-export type GenKeyFromMsg = (msg: string) => string | null | undefined;
+export type GenKeyFromMsg = (msg: string) => string | null | undefined | {key: string; redisGetOpts?: RedisGetOpts};
 // any because it depends on the GetOpts and Users can type it correctly
 export type Deserialize<V, RV extends (string | Record<string, string>) = string> = (rVal: RV, key: string) => V | null | undefined;
 
@@ -32,6 +32,7 @@ export type FallbackFetchMethode<T> = (key: string) => Promise<T | null | undefi
 
 export interface GetOpts {
 	clone?: boolean;
+	redisGetOpts?: RedisGetOpts;
 }
 
 export interface Events {
@@ -121,7 +122,7 @@ export type Opts<storedValueType> = {
  */
 export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonNullable<unknown>> extends EventEmitter<Events> {
 	private readonly opts: Opts<storedValueType>;
-	private readonly valueCache: LRUCache<string, storedValueType>;
+	private readonly valueCache: LRUCache<string, storedValueType, {redisGetOptions?: RedisGetOpts} | undefined>;
 	private readonly client: ReturnType<(typeof createClient)>;
 	private readonly subscriber: ReturnType<(typeof createClient)>;
 	private readonly genKeyFromMsg: GenKeyFromMsg;
@@ -158,11 +159,11 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 		if (this.opts.onMessageStrategy) {
 			this.onMessageStrategy = this.opts.onMessageStrategy;
 		}
-		this.valueCache = new LRUCache<string, storedValueType>({
+		this.valueCache = new LRUCache<string, storedValueType, {redisGetOptions?: RedisGetOpts}| undefined>({
 			max: this.opts.cacheMaxSize ?? 1000,
-			fetchMethod: async (key: string) => {
+			fetchMethod: async (key: string, _value, options) => {
 				try {
-					return await this.fetchMethod(key);
+					return await this.fetchMethod(key, options.context?.redisGetOptions);
 				} catch (error) {
 					this.errorHandler(error, { key });
 				}
@@ -317,7 +318,8 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 		if (previousAttempt) {
 			value = await previousAttempt;
 		} else {
-			const currentAttempt = this.fetch(key);
+			const fetchOpts = { redisGetOptions: opts?.redisGetOpts };
+			const currentAttempt = this.fetch(key, fetchOpts);
 
 			this.promiseMap[key] = currentAttempt;
 
@@ -411,8 +413,15 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 		// if for whatever reason client is disconnected but subscriber is not (should not happen) take this for safety
 		if (this.clientConnected) {
 			let key: string | null | undefined;
+			let specialFetchOptions: {redisGetOptions?: RedisGetOpts} | undefined;
 			try {
-				key = this.genKeyFromMsg(msg);
+				const generatedKey = this.genKeyFromMsg(msg);
+				if (generatedKey && typeof generatedKey === "object") {
+					key = generatedKey.key;
+					specialFetchOptions = { redisGetOptions: generatedKey.redisGetOpts };
+				} else {
+					key = generatedKey;
+				}
 
 			} catch (error) {
 				this.errorHandler(error, { msg });
@@ -431,7 +440,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 					return;
 				}
 
-				await this.valueCache.fetch(key);
+				await this.valueCache.fetch(key, { context: specialFetchOptions });
 
 				if (this.onMessageStrategy === "refetch" && wasInCache) {
 					this.emit("refetched", key);
@@ -449,13 +458,13 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	 * @param {string} key
 	 * @memberof RedisValueCache
 	 */
-	private async fetch(key: string) {
+	private async fetch(key: string, specialFetchOptions?: {redisGetOptions?: RedisGetOpts }) {
 		this.assertConnected();
 
 		let savedValue: storedValueType | undefined | null;
 
 		try {
-			savedValue = await this.valueCache.fetch(key);
+			savedValue = await this.valueCache.fetch(key, { context: specialFetchOptions });
 		} catch (error) {
 			this.errorHandler(error, { key });
 		}
@@ -489,12 +498,14 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	 * @param {string} key key to fetch
 	 * @memberof RedisValueCache
 	 */
-	private async fetchMethod(key: string) {
+	private async fetchMethod(key: string, specialFetchOptions?: RedisGetOpts) {
 		let redisValue: string | undefined | null | Record<string, string>;
 
-		switch (this.redisGetOpts.type) {
+		const optsToUse = specialFetchOptions ?? this.redisGetOpts;
+
+		switch (optsToUse.type) {
 			case "HGET": {
-				redisValue = await this.client.HGET(key, this.redisGetOpts.argument);
+				redisValue = await this.client.HGET(key, optsToUse.argument);
 				break;
 			}
 			case "GET": {
