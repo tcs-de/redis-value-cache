@@ -1,6 +1,6 @@
 {
   "name": "redis-value-cache",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -32,7 +32,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/de3lo/redis-value-cache.git"
+    "url": "https://github.com/tcs-de/redis-value-cache.git"
   },
   "dependencies": {
     "lodash": "^4.17.21",
