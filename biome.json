@@ -1,0 +1,109 @@
+{
+	"$schema": "https://biomejs.dev/schemas/2.3.15/schema.json",
+	"files": {
+		"includes": [
+			"**",
+			"!**/src/lib/PDFreactor/PDFreactor.ts",
+			"!debugOut",
+			"!dist",
+			"!.vscode",
+			"!pdf-downloads",
+			"!download-pdfs.js",
+			"!devView"
+		],
+		"ignoreUnknown": false
+	},
+	"formatter": {
+		"enabled": true,
+		"indentStyle": "tab",
+		"indentWidth": 4,
+		"lineWidth": 160
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "double"
+		},
+		"jsxRuntime": "reactClassic"
+	},
+	"linter": {
+		"domains": {
+			"react": "recommended"
+		},
+		"enabled": true,
+		"rules": {
+			"recommended": true,
+			"style": {
+				"noNegationElse": "info",
+				"noUselessElse": "info",
+				"useSelfClosingElements": {
+					"level": "info",
+					"options": {
+						"ignoreHtmlElements": true
+					}
+				},
+				"useImportType": {
+					"level": "warn",
+					"options": {
+						"style": "separatedType"
+					}
+				},
+				"noParameterAssign": "warn",
+				"noYodaExpression": "error",
+				"useAsConstAssertion": "error",
+				"useBlockStatements": "error"
+			},
+			"complexity": {
+				"noForEach": "error",
+				"noUselessStringConcat": "error"
+			},
+			"correctness": {
+				"noNestedComponentDefinitions": "warn",
+				"useExhaustiveDependencies": {
+					"level": "error",
+					"options": {
+						"hooks": [
+							{
+								"name": "useApp",
+								"stableResult": [
+									"ctx",
+									"store"
+								]
+							},
+							{
+								"name": "useCreateGridNext",
+								"stableResult": true
+							},
+							{
+								"name": "useFormContext",
+								"stableResult": [
+									"getValues",
+									"setValue",
+									"setError",
+									"resetField",
+									"reset"
+								]
+							}
+						]
+					}
+				}
+			}
+		}
+	},
+	"assist": {
+		"actions": {
+			"source": {
+				"organizeImports": {
+					"level": "on",
+					"options": {
+						"groups": [
+							{
+								"type": true
+							},
+							":BLANK_LINE:"
+						]
+					}
+				}
+			}
+		}
+	}
+}

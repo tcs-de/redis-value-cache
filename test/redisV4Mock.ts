@@ -35,7 +35,7 @@ const db: Record<string, (string | Record<string, string>)> = {
 const connectedClients = new Set<Client>();
 
 export class Client extends EventEmitter {
-	private connected = false;
+	// private connected = false;
 	private open = false;
 	private listener: ((msg: string) => Promise<void>) | undefined;
 
@@ -75,7 +75,7 @@ export class Client extends EventEmitter {
 		this.emit("ready");
 	}
 
-	public async subscribe(name: string, listener: (msg: string) => Promise<void>) {
+	public async subscribe(_name: string, listener: (msg: string) => Promise<void>) {
 		await setTimeout(1);
 		this.listener = listener;
 	}

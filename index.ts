@@ -1,9 +1,9 @@
-/* eslint-disable unicorn/prefer-event-target */
-import { LRUCache } from "lru-cache";
 import type { RedisClientOptions } from "redis";
-import { createClient } from "redis";
-import cloneDeep from "lodash/cloneDeep";
+
 import EventEmitter from "node:events";
+import cloneDeep from "lodash/cloneDeep";
+import { LRUCache } from "lru-cache";
+import { createClient } from "redis";
 
 interface RedisHget {
 	type: "HGET";
@@ -24,9 +24,9 @@ export type RedisChannelOpts = {
 	name: string;
 };
 
-export type GenKeyFromMsg = (msg: string) => string | null | undefined | {key: string; redisGetOpts?: RedisGetOpts};
+export type GenKeyFromMsg = (msg: string) => string | null | undefined | { key: string; redisGetOpts?: RedisGetOpts };
 // any because it depends on the GetOpts and Users can type it correctly
-export type Deserialize<V, RV extends (string | Record<string, string>) = string> = (rVal: RV, key: string) => V | null | undefined;
+export type Deserialize<V, RV extends string | Record<string, string> = string> = (rVal: RV, key: string) => V | null | undefined;
 
 export type FallbackFetchMethode<T> = (key: string) => Promise<T | null | undefined>;
 
@@ -36,12 +36,12 @@ export interface GetOpts {
 }
 
 export interface Events {
-	"ready": [];
-	"error": [error: Error, client: "client" | "subscriber"];
-	"unexpectedError": [error: unknown, ctx: {key: string} | { msg: string }];
-	"dropped": [key: string];
-	"refetched": [key: string];
-	"fetched": [key: string];
+	ready: [];
+	error: [error: Error, client: "client" | "subscriber"];
+	unexpectedError: [error: unknown, ctx: { key: string } | { msg: string }];
+	dropped: [key: string];
+	refetched: [key: string];
+	fetched: [key: string];
 }
 
 /**
@@ -78,37 +78,39 @@ export interface Events {
  * @interface Opts
  * @template storedValueType type of the values you want to store.
  */
-export type Opts<storedValueType> = {
-	redis: {
-		clientOpts?: RedisClientOptions;
-		client?: ReturnType<(typeof createClient)>;
-		channelOpts: RedisChannelOpts;
-		getOpts: RedisGet | RedisHget;
+export type Opts<storedValueType> =
+	| {
+		redis: {
+			clientOpts?: RedisClientOptions;
+			client?: ReturnType<typeof createClient>;
+			channelOpts: RedisChannelOpts;
+			getOpts: RedisGet | RedisHget;
+		};
+		genKeyFromMsg: GenKeyFromMsg;
+		deserialize: Deserialize<storedValueType>;
+		cacheMaxSize?: number;
+		errorHandlerStrategy?: "emit" | "warn" | "throw" | "ignore";
+		fallbackFetchMethod?: FallbackFetchMethode<storedValueType>;
+		onMessageStrategy?: "drop" | "refetch" | "fetchAlways";
+		freeze?: boolean;
+		cacheFallbackValues?: boolean;
+	}
+	| {
+		redis: {
+			clientOpts?: RedisClientOptions;
+			client?: ReturnType<typeof createClient>;
+			channelOpts: RedisChannelOpts;
+			getOpts: RedisHgetall;
+		};
+		genKeyFromMsg: GenKeyFromMsg;
+		deserialize: Deserialize<storedValueType, Record<string, string>>;
+		cacheMaxSize?: number;
+		errorHandlerStrategy?: "emit" | "warn" | "throw" | "ignore";
+		fallbackFetchMethod?: FallbackFetchMethode<storedValueType>;
+		onMessageStrategy?: "drop" | "refetch" | "fetchAlways";
+		freeze?: boolean;
+		cacheFallbackValues?: boolean;
 	};
-	genKeyFromMsg: GenKeyFromMsg;
-	deserialize: Deserialize<storedValueType>;
-	cacheMaxSize?: number;
-	errorHandlerStrategy?: "emit"|"warn"|"throw"|"ignore";
-	fallbackFetchMethod?: FallbackFetchMethode<storedValueType>;
-	onMessageStrategy?: "drop" | "refetch" | "fetchAlways";
-	freeze?: boolean;
-	cacheFallbackValues?: boolean;
-} | {
-	redis: {
-		clientOpts?: RedisClientOptions;
-		client?: ReturnType<(typeof createClient)>;
-		channelOpts: RedisChannelOpts;
-		getOpts: RedisHgetall;
-	};
-	genKeyFromMsg: GenKeyFromMsg;
-	deserialize: Deserialize<storedValueType, Record<string, string>>;
-	cacheMaxSize?: number;
-	errorHandlerStrategy?: "emit"|"warn"|"throw"|"ignore";
-	fallbackFetchMethod?: FallbackFetchMethode<storedValueType>;
-	onMessageStrategy?: "drop" | "refetch" | "fetchAlways";
-	freeze?: boolean;
-	cacheFallbackValues?: boolean;
-};
 
 /**
  * An object that caches an automatically updates your values from redis
@@ -122,9 +124,9 @@ export type Opts<storedValueType> = {
  */
 export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonNullable<unknown>> extends EventEmitter<Events> {
 	private readonly opts: Opts<storedValueType>;
-	private readonly valueCache: LRUCache<string, storedValueType, {redisGetOptions?: RedisGetOpts} | undefined>;
-	private readonly client: ReturnType<(typeof createClient)>;
-	private readonly subscriber: ReturnType<(typeof createClient)>;
+	private readonly valueCache: LRUCache<string, storedValueType, { redisGetOptions?: RedisGetOpts } | undefined>;
+	private readonly client: ReturnType<typeof createClient>;
+	private readonly subscriber: ReturnType<typeof createClient>;
 	private readonly genKeyFromMsg: GenKeyFromMsg;
 	private readonly deserialize: Deserialize<storedValueType> | Deserialize<storedValueType, Record<string, string>>;
 	private readonly fallbackFetchMethod: FallbackFetchMethode<storedValueType> | undefined;
@@ -159,7 +161,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 		if (this.opts.onMessageStrategy) {
 			this.onMessageStrategy = this.opts.onMessageStrategy;
 		}
-		this.valueCache = new LRUCache<string, storedValueType, {redisGetOptions?: RedisGetOpts}| undefined>({
+		this.valueCache = new LRUCache<string, storedValueType, { redisGetOptions?: RedisGetOpts } | undefined>({
 			max: this.opts.cacheMaxSize ?? 1000,
 			fetchMethod: async (key: string, _value, options) => {
 				try {
@@ -167,9 +169,9 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 				} catch (error) {
 					this.errorHandler(error, { key });
 				}
-				// eslint-disable-next-line consistent-return
+
 				return;
-			}
+			},
 		});
 		if (this.opts.freeze === false) {
 			this.freeze = false;
@@ -201,7 +203,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	 * @memberof RedisValueCache
 	 */
 	public getConnected() {
-		return (this.clientConnected && this.subscriberConnected);
+		return this.clientConnected && this.subscriberConnected;
 	}
 
 	/**
@@ -244,7 +246,6 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 				this.emit("error", error, "client");
 			});
 
-
 			this.subscriber.on("ready", () => {
 				this.subscriberConnected = true;
 				if (this.clientConnected === true) {
@@ -282,7 +283,6 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 				await this.subscriber.subscribe(this.opts.redis.channelOpts.name, async (message) => {
 					await this.onMessage(message);
 				});
-
 			}
 		}
 	}
@@ -313,7 +313,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 
 		const previousAttempt = this.promiseMap[key];
 
-		let value: storedValueType| undefined;
+		let value: storedValueType | undefined;
 
 		if (previousAttempt) {
 			value = await previousAttempt;
@@ -325,7 +325,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 
 			value = await currentAttempt;
 
-			// eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+
 			delete this.promiseMap[key];
 		}
 
@@ -333,7 +333,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 			value = cloneDeep(value);
 		}
 
-		// eslint-disable-next-line consistent-return
+
 		return value;
 	}
 
@@ -351,7 +351,6 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 		if (this.client.isOpen) {
 			await this.client.disconnect();
 		}
-
 	}
 
 	/**
@@ -392,7 +391,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	 * @param {unknown} error
 	 * @memberof RedisObjectCache
 	 */
-	private errorHandler(error: unknown, ctx: {msg: string} | {key: string}) {
+	private errorHandler(error: unknown, ctx: { msg: string } | { key: string }) {
 		if (!this.opts.errorHandlerStrategy || this.opts.errorHandlerStrategy === "warn") {
 			console.warn(error);
 		} else if (this.opts.errorHandlerStrategy === "throw") {
@@ -413,7 +412,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 		// if for whatever reason client is disconnected but subscriber is not (should not happen) take this for safety
 		if (this.clientConnected) {
 			let key: string | null | undefined;
-			let specialFetchOptions: {redisGetOptions?: RedisGetOpts} | undefined;
+			let specialFetchOptions: { redisGetOptions?: RedisGetOpts } | undefined;
 			try {
 				const generatedKey = this.genKeyFromMsg(msg);
 				if (generatedKey && typeof generatedKey === "object") {
@@ -422,7 +421,6 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 				} else {
 					key = generatedKey;
 				}
-
 			} catch (error) {
 				this.errorHandler(error, { msg });
 			}
@@ -458,7 +456,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	 * @param {string} key
 	 * @memberof RedisValueCache
 	 */
-	private async fetch(key: string, specialFetchOptions?: {redisGetOptions?: RedisGetOpts }) {
+	private async fetch(key: string, specialFetchOptions?: { redisGetOptions?: RedisGetOpts }) {
 		this.assertConnected();
 
 		let savedValue: storedValueType | undefined | null;
@@ -486,7 +484,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 		if (savedValue) {
 			return savedValue;
 		}
-		// eslint-disable-next-line consistent-return
+
 		return;
 	}
 
@@ -545,7 +543,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 			deepFreeze(value);
 		}
 
-		// eslint-disable-next-line consistent-return
+
 		return value;
 	}
 
@@ -566,7 +564,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 			throw new TypeError("OPTS_NOT_AN_OBJECT");
 		}
 
-		let cacheMaxSize: number|undefined;
+		let cacheMaxSize: number | undefined;
 
 		if ("cacheMaxSize" in opts) {
 			if (typeof opts.cacheMaxSize === "number") {
@@ -578,7 +576,12 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 
 		let errorHandlerStrategy: "emit" | "warn" | "ignore" | "throw" | undefined;
 		if ("errorHandlerStrategy" in opts) {
-			if (opts.errorHandlerStrategy === "emit" || opts.errorHandlerStrategy === "warn" || opts.errorHandlerStrategy === "ignore" || opts.errorHandlerStrategy === "throw") {
+			if (
+				opts.errorHandlerStrategy === "emit" ||
+				opts.errorHandlerStrategy === "warn" ||
+				opts.errorHandlerStrategy === "ignore" ||
+				opts.errorHandlerStrategy === "throw"
+			) {
 				errorHandlerStrategy = opts.errorHandlerStrategy;
 			} else {
 				throw new Error("OPTS_HANDLE_ERRORS_INVALID");
@@ -653,17 +656,19 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 		if (typeof opts.redis.channelOpts !== "object") {
 			throw new TypeError("OPTS_REDIS_CHANNEL_OPTS_TYPE_MISMATCH");
 		}
-		if (!(
-			"type" in opts.redis.channelOpts
-			&& "name" in opts.redis.channelOpts
-			&& (opts.redis.channelOpts.type === "subscribe" || opts.redis.channelOpts.type === "pSubscribe")
-			&& typeof opts.redis.channelOpts.name === "string"
-		)) {
+		if (
+			!(
+				"type" in opts.redis.channelOpts &&
+				"name" in opts.redis.channelOpts &&
+				(opts.redis.channelOpts.type === "subscribe" || opts.redis.channelOpts.type === "pSubscribe") &&
+				typeof opts.redis.channelOpts.name === "string"
+			)
+		) {
 			throw new TypeError("OPTS_REDIS_CHANNEL_OPTS_TYPE_INVALID");
 		}
 
-		let clientOpts: RedisClientOptions|undefined;
-		if (("clientOpts" in opts.redis)) {
+		let clientOpts: RedisClientOptions | undefined;
+		if ("clientOpts" in opts.redis) {
 			if (!opts.redis.clientOpts) {
 				throw new Error("OPTS_REDIS_CLIENT_OPTS_IS_NULL");
 			}
@@ -673,14 +678,14 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 			clientOpts = opts.redis.clientOpts;
 		}
 
-		let client: ReturnType<(typeof createClient)> | undefined;
+		let client: ReturnType<typeof createClient> | undefined;
 
 		if ("client" in opts.redis && opts.redis.client) {
-			// eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+
 			if (!(opts.redis.client.constructor && opts.redis.client.constructor.name === "Commander")) {
 				throw new TypeError("OPTS_REDIS_CLIENT_INVALID");
 			}
-			client = opts.redis.client as ReturnType<(typeof createClient)>;
+			client = opts.redis.client as ReturnType<typeof createClient>;
 		}
 
 		if (!("getOpts" in opts.redis) || !opts.redis.getOpts) {
@@ -689,10 +694,10 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 		if (typeof opts.redis.getOpts !== "object") {
 			throw new TypeError("OPTS_REDIS_FETCH_OPTIONS_TYPE_MISMATCH");
 		}
-		if (!("type" in opts.redis.getOpts)
-			|| !(opts.redis.getOpts.type === "HGET"
-			|| opts.redis.getOpts.type === "HGETALL"
-			|| opts.redis.getOpts.type === "GET")) {
+		if (
+			!("type" in opts.redis.getOpts) ||
+			!(opts.redis.getOpts.type === "HGET" || opts.redis.getOpts.type === "HGETALL" || opts.redis.getOpts.type === "GET")
+		) {
 			throw new Error("OPTS_REDIS_FETCH_OPTIONS_TYPE_INVALID");
 		}
 
@@ -707,11 +712,11 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 				}
 				getOpts = {
 					type: opts.redis.getOpts.type,
-					argument: opts.redis.getOpts.argument
+					argument: opts.redis.getOpts.argument,
 				};
 			} else {
 				getOpts = {
-					type: opts.redis.getOpts.type
+					type: opts.redis.getOpts.type,
 				};
 			}
 
@@ -722,8 +727,8 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 					client,
 					channelOpts: {
 						type: opts.redis.channelOpts.type,
-						name: opts.redis.channelOpts.name
-					}
+						name: opts.redis.channelOpts.name,
+					},
 				},
 				cacheMaxSize,
 				fallbackFetchMethod,
@@ -732,21 +737,20 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 				errorHandlerStrategy: errorHandlerStrategy,
 				deserialize: opts.deserialize as Deserialize<storedValueType>,
 				freeze,
-				cacheFallbackValues
+				cacheFallbackValues,
 			};
-
 		} else {
 			checkedOpts = {
 				redis: {
 					getOpts: {
-						type: opts.redis.getOpts.type
+						type: opts.redis.getOpts.type,
 					},
 					clientOpts,
 					client,
 					channelOpts: {
 						type: opts.redis.channelOpts.type,
-						name: opts.redis.channelOpts.name
-					}
+						name: opts.redis.channelOpts.name,
+					},
 				},
 				cacheMaxSize,
 				fallbackFetchMethod,
@@ -755,7 +759,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 				errorHandlerStrategy: errorHandlerStrategy,
 				deserialize: opts.deserialize as Deserialize<storedValueType, Record<string, string>>,
 				freeze,
-				cacheFallbackValues
+				cacheFallbackValues,
 			};
 		}
 
@@ -767,19 +771,16 @@ function deepFreeze<T>(o: T): T {
 	Object.freeze(o);
 
 	const oIsFunction = typeof o === "function";
-	// eslint-disable-next-line @typescript-eslint/unbound-method
+
 	const hasOwnProp = Object.prototype.hasOwnProperty;
 
 	for (const prop of Object.getOwnPropertyNames(o)) {
 		if (
-			hasOwnProp.call(o, prop)
-		&& (oIsFunction
-			? prop !== "caller" && prop !== "callee" && prop !== "arguments"
-			: true)
-		&& o[prop as keyof T] !== null
-		&& (typeof o[prop as keyof T] === "object"
-		|| typeof o[prop as keyof T] === "function")
-		&& !Object.isFrozen(o[prop as keyof T])
+			hasOwnProp.call(o, prop) &&
+			(oIsFunction ? prop !== "caller" && prop !== "callee" && prop !== "arguments" : true) &&
+			o[prop as keyof T] !== null &&
+			(typeof o[prop as keyof T] === "object" || typeof o[prop as keyof T] === "function") &&
+			!Object.isFrozen(o[prop as keyof T])
 		) {
 			deepFreeze(o[prop as keyof T]);
 		}
@@ -788,4 +789,4 @@ function deepFreeze<T>(o: T): T {
 	return o;
 }
 
-export { type RedisClientOptions } from "redis";
+export type { RedisClientOptions } from "redis";

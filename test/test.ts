@@ -1,24 +1,25 @@
-import { RedisValueCache } from "../index";
-import type { Deserialize, Opts, FallbackFetchMethode } from "../index";
-import redisV4Mock, { Client } from "./redisV4Mock";
+import type { Deserialize, FallbackFetchMethode, Opts } from "../index";
+
 import { setTimeout } from "node:timers/promises";
+import { RedisValueCache } from "../index";
+import redisV4Mock, { Client } from "./redisV4Mock";
 
 const mockClient = redisV4Mock.createClient();
 
 mockClient.constructor = {
-	name: "Commander"
-// eslint-disable-next-line @typescript-eslint/ban-types
+	name: "Commander",
+	// biome-ignore lint/complexity/noBannedTypes: needed for test. if the constructor does not have the correct name, the RedisValueCache will not recognize it as a valid client and will throw an error
 } as Function;
 
 const defaultOptsString: Opts<string> = {
 	redis: {
 		channelOpts: {
 			type: "subscribe",
-			name: "channel"
+			name: "channel",
 		},
 		getOpts: {
-			type: "GET"
-		}
+			type: "GET",
+		},
 	},
 	cacheMaxSize: 100,
 	genKeyFromMsg: (msg: string) => {
@@ -26,7 +27,7 @@ const defaultOptsString: Opts<string> = {
 	},
 	deserialize: (rVal: string) => {
 		return rVal;
-	}
+	},
 } as const;
 
 // this is testing with a mocked version of redis
@@ -37,11 +38,11 @@ describe("create Redis value caches with different options and read 1 value", ()
 			redis: {
 				channelOpts: {
 					type: "subscribe",
-					name: "channel"
+					name: "channel",
 				},
 				getOpts: {
-					type: "GET"
-				}
+					type: "GET",
+				},
 			},
 			cacheMaxSize: 100,
 			genKeyFromMsg: (msg: string) => {
@@ -49,7 +50,7 @@ describe("create Redis value caches with different options and read 1 value", ()
 			},
 			deserialize: (rVal: string) => {
 				return rVal;
-			}
+			},
 		});
 
 		await rvc.connect();
@@ -58,62 +59,60 @@ describe("create Redis value caches with different options and read 1 value", ()
 
 		await rvc.quit();
 		expect(value).toBe("value1");
-
 	});
 
 	test(".new() create with HGet Option", async () => {
-		const rvc = await RedisValueCache.new<{value: number; info: string}>({
+		const rvc = await RedisValueCache.new<{ value: number; info: string }>({
 			redis: {
 				channelOpts: {
 					type: "subscribe",
-					name: "channel"
+					name: "channel",
 				},
 				getOpts: {
 					type: "HGET",
-					argument: "object"
-				}
+					argument: "object",
+				},
 			},
 			cacheMaxSize: 100,
 			genKeyFromMsg: (msg: string) => {
 				return msg;
 			},
 			deserialize: (rVal: string) => {
-				return JSON.parse(rVal) as {value: number; info: string};
-			}
+				return JSON.parse(rVal) as { value: number; info: string };
+			},
 		});
 
 		const value = await rvc.get("key6");
 
 		await rvc.disconnect();
 		expect(value).toEqual({ value: 6, info: "Info 1" });
-
 	});
 
 	test("pass client into create with HGetAll", async () => {
-		const rvc = new RedisValueCache<{object: {value: number; info: string}; type: string}>({
+		const rvc = new RedisValueCache<{ object: { value: number; info: string }; type: string }>({
 			redis: {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+				// biome-ignore lint/suspicious/noExplicitAny: needed for test since client is not 100% compatible with redis client but should fake the most important parts 
 				client: mockClient as any,
 				channelOpts: {
 					type: "subscribe",
-					name: "channel"
+					name: "channel",
 				},
 				getOpts: {
-					type: "HGETALL"
-				}
+					type: "HGETALL",
+				},
 			},
 			cacheMaxSize: 100,
 			genKeyFromMsg: (msg: string) => {
 				return msg;
 			},
 			deserialize: (rVal: Record<string, string>) => {
-				const object = JSON.parse(rVal.object) as {value: number; info: string};
+				const object = JSON.parse(rVal.object) as { value: number; info: string };
 
 				return {
 					object,
-					type: rVal.type
+					type: rVal.type,
 				};
-			}
+			},
 		});
 
 		await rvc.connect();
@@ -122,16 +121,17 @@ describe("create Redis value caches with different options and read 1 value", ()
 
 		await rvc.quit();
 		expect(value).toEqual({ object: { value: 7, info: "Info 2" }, type: "object" });
-
 	});
 });
 
 describe("fall back fetch Method", () => {
-	const testFallback = jest.fn(() => { return "Test"; });
+	const testFallback = jest.fn(() => {
+		return "Test";
+	});
 	test("fall back fetch Methode is unused if deserialize returns values", async () => {
 		const rvc = await RedisValueCache.new<string>({
 			...defaultOptsString,
-			fallbackFetchMethod: testFallback as unknown as FallbackFetchMethode<string>
+			fallbackFetchMethod: testFallback as unknown as FallbackFetchMethode<string>,
 		});
 
 		await rvc.get("key1");
@@ -148,7 +148,7 @@ describe("fall back fetch Method", () => {
 
 		const rvc = await RedisValueCache.new<string>({
 			...defaultOptsString,
-			fallbackFetchMethod: testFallback as unknown as FallbackFetchMethode<string>
+			fallbackFetchMethod: testFallback as unknown as FallbackFetchMethode<string>,
 		});
 
 		await rvc.get("nonexistentKey1");
@@ -166,7 +166,9 @@ describe("fall back fetch Method", () => {
 		const rvc = await RedisValueCache.new<string>({
 			...defaultOptsString,
 			fallbackFetchMethod: testFallback as unknown as FallbackFetchMethode<string>,
-			deserialize: () => { return null; }
+			deserialize: () => {
+				return null;
+			},
 		});
 
 		await rvc.get("key1");
@@ -180,14 +182,18 @@ describe("fall back fetch Method", () => {
 	});
 
 	test("if cacheFallbackValue is false, no values from fallbackFetchMethod are cached", async () => {
-		const nullTestFallback = jest.fn(() => { return "ANYTHING"; });
-		const nullTestDeserialize = jest.fn(() => { return null; });
+		const nullTestFallback = jest.fn(() => {
+			return "ANYTHING";
+		});
+		const nullTestDeserialize = jest.fn(() => {
+			return null;
+		});
 
 		const rvc = await RedisValueCache.new<string>({
 			...defaultOptsString,
 			fallbackFetchMethod: nullTestFallback as unknown as FallbackFetchMethode<string>,
 			deserialize: nullTestDeserialize,
-			cacheFallbackValues: false
+			cacheFallbackValues: false,
 		});
 
 		await rvc.get("key1");
@@ -205,7 +211,6 @@ describe("fall back fetch Method", () => {
 		await rvc.quit();
 		expect(nullTestFallback.mock.calls).toHaveLength(10);
 		expect(nullTestDeserialize.mock.calls).toHaveLength(10);
-
 	});
 
 	test("if cacheFallbackValue is true, values from fallbackFetchMethod are cached", async () => {
@@ -213,13 +218,15 @@ describe("fall back fetch Method", () => {
 			await setTimeout(1);
 			return "ANYTHING";
 		});
-		const nullTestDeserialize = jest.fn(() => { return null; });
+		const nullTestDeserialize = jest.fn(() => {
+			return null;
+		});
 
 		const rvc = await RedisValueCache.new<string>({
 			...defaultOptsString,
 			fallbackFetchMethod: nullTestFallback as unknown as FallbackFetchMethode<string>,
 			deserialize: nullTestDeserialize,
-			cacheFallbackValues: true
+			cacheFallbackValues: true,
 		});
 
 		await rvc.get("key1");
@@ -237,18 +244,21 @@ describe("fall back fetch Method", () => {
 		await rvc.quit();
 		expect(nullTestDeserialize.mock.calls).toHaveLength(5);
 		expect(nullTestFallback.mock.calls).toHaveLength(5);
-
 	});
 
 	test("if fall back fetch method returns no value, nothing is cached", async () => {
-		const nullTestFallback = jest.fn(() => { return null; });
-		const nullTestDeserialize = jest.fn(() => { return null; });
+		const nullTestFallback = jest.fn(() => {
+			return null;
+		});
+		const nullTestDeserialize = jest.fn(() => {
+			return null;
+		});
 
 		const rvc = await RedisValueCache.new<string>({
 			...defaultOptsString,
 			fallbackFetchMethod: nullTestFallback as unknown as FallbackFetchMethode<string>,
 			deserialize: nullTestDeserialize,
-			cacheFallbackValues: true
+			cacheFallbackValues: true,
 		});
 
 		await rvc.get("key1");
@@ -266,33 +276,30 @@ describe("fall back fetch Method", () => {
 		await rvc.quit();
 		expect(nullTestFallback.mock.calls).toHaveLength(10);
 		expect(nullTestDeserialize.mock.calls).toHaveLength(10);
-
 	});
-
 });
-
 
 describe("caching", () => {
 	test("object is not fetched 2 times and the same object is returned", async () => {
-		const testDeserialize = jest.fn((val: string, key: string) => {
+		const testDeserialize = jest.fn((val: string, _key: string) => {
 			return { val };
 		});
 
-		const rvc = new RedisValueCache<{val: string}>({
+		const rvc = new RedisValueCache<{ val: string }>({
 			redis: {
 				channelOpts: {
 					type: "subscribe",
-					name: "channel"
+					name: "channel",
 				},
 				getOpts: {
-					type: "GET"
-				}
+					type: "GET",
+				},
 			},
 			cacheMaxSize: 100,
 			genKeyFromMsg: (msg: string) => {
 				return msg;
 			},
-			deserialize: testDeserialize as unknown as Deserialize<{val: string}>
+			deserialize: testDeserialize as unknown as Deserialize<{ val: string }>,
 		});
 
 		await rvc.connect();
@@ -313,7 +320,7 @@ describe("caching", () => {
 	});
 
 	test("multiple calls of get with same key trigger only 1 fetch", async () => {
-		const fallbackFetchMethodTest = jest.fn(async (val: string, key: string) => {
+		const fallbackFetchMethodTest = jest.fn(async (_val: string, _key: string) => {
 			await setTimeout(1000);
 			return "test";
 		});
@@ -324,12 +331,12 @@ describe("caching", () => {
 				// forces fallbackFetchMethod
 				return null;
 			},
-			fallbackFetchMethod: fallbackFetchMethodTest as unknown as FallbackFetchMethode<string>
+			fallbackFetchMethod: fallbackFetchMethodTest as unknown as FallbackFetchMethode<string>,
 		});
 
 		await rvc.connect();
 
-		const promises: Promise<string|undefined>[] = [];
+		const promises: Promise<string | undefined>[] = [];
 		for (let i = 0; i < 10; i++) {
 			promises.push(rvc.get("key1"));
 		}
@@ -342,13 +349,13 @@ describe("caching", () => {
 	});
 
 	describe("cache is flushed during disconnect / object can be deleted", () => {
-		const testDeserialize = jest.fn((val: string, key: string) => {
+		const testDeserialize = jest.fn((_val: string, _key: string) => {
 			return "Anything";
 		});
 		test("cache flushed during disconnect", async () => {
 			const rvc = await RedisValueCache.new<string>({
 				...defaultOptsString,
-				deserialize: testDeserialize as unknown as Deserialize<string>
+				deserialize: testDeserialize as unknown as Deserialize<string>,
 			});
 
 			await rvc.get("key1");
@@ -377,7 +384,7 @@ describe("caching", () => {
 
 			const rvc = await RedisValueCache.new<string>({
 				...defaultOptsString,
-				deserialize: testDeserialize as unknown as Deserialize<string>
+				deserialize: testDeserialize as unknown as Deserialize<string>,
 			});
 
 			await rvc.get("key1");
@@ -406,7 +413,7 @@ describe("caching", () => {
 
 			const rvc = await RedisValueCache.new<string>({
 				...defaultOptsString,
-				deserialize: testDeserialize as unknown as Deserialize<string>
+				deserialize: testDeserialize as unknown as Deserialize<string>,
 			});
 
 			await rvc.get("key1");
@@ -433,12 +440,16 @@ describe("caching", () => {
 
 		test("cache is flushed on error event and error event is passed on", async () => {
 			testDeserialize.mockClear();
-			const testOnReady = jest.fn(() => { console.log("ready"); });
-			const testOnError = jest.fn(() => { console.log("error"); });
+			const testOnReady = jest.fn(() => {
+				console.log("ready");
+			});
+			const testOnError = jest.fn(() => {
+				console.log("error");
+			});
 
 			const rvc = await RedisValueCache.new<string>({
 				...defaultOptsString,
-				deserialize: testDeserialize as unknown as Deserialize<string>
+				deserialize: testDeserialize as unknown as Deserialize<string>,
 			});
 
 			rvc.on("ready", testOnReady);
@@ -473,7 +484,9 @@ describe("caching", () => {
 });
 
 describe("messages", () => {
-	const testGenKeyFromMsg = jest.fn((msg: string) => { return msg; });
+	const testGenKeyFromMsg = jest.fn((msg: string) => {
+		return msg;
+	});
 	const testDeserialize = jest.fn((rVal: string) => rVal);
 
 	test("message strategy dropped", async () => {
@@ -482,18 +495,18 @@ describe("messages", () => {
 		const rvc = await RedisValueCache.new<string>({
 			...defaultOptsString,
 			redis: {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+				// biome-ignore lint/suspicious/noExplicitAny: needed for test since client is not 100% compatible with redis client but should fake the most important parts
 				client: mockClient as any,
 				channelOpts: {
 					type: "subscribe",
-					name: "channel"
+					name: "channel",
 				},
 				getOpts: {
-					type: "GET"
-				}
+					type: "GET",
+				},
 			},
 			genKeyFromMsg: testGenKeyFromMsg,
-			deserialize: testDeserialize as unknown as Deserialize<string>
+			deserialize: testDeserialize as unknown as Deserialize<string>,
 		});
 
 		rvc.on("dropped", testDroppedListener);
@@ -519,7 +532,6 @@ describe("messages", () => {
 		expect(testGenKeyFromMsg.mock.calls).toHaveLength(6);
 		expect(testDeserialize.mock.calls).toHaveLength(3);
 		expect(testDroppedListener.mock.calls).toHaveLength(3);
-
 	});
 	test("message strategy fetch always", async () => {
 		testGenKeyFromMsg.mockClear();
@@ -529,19 +541,19 @@ describe("messages", () => {
 		const rvc = await RedisValueCache.new<string>({
 			...defaultOptsString,
 			redis: {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+				// biome-ignore lint/suspicious/noExplicitAny: needed for test since client is not 100% compatible with redis client but should fake the most important parts
 				client: mockClient as any,
 				channelOpts: {
 					type: "subscribe",
-					name: "channel"
+					name: "channel",
 				},
 				getOpts: {
-					type: "GET"
-				}
+					type: "GET",
+				},
 			},
 			genKeyFromMsg: testGenKeyFromMsg,
 			deserialize: testDeserialize as unknown as Deserialize<string>,
-			onMessageStrategy: "fetchAlways"
+			onMessageStrategy: "fetchAlways",
 		});
 
 		rvc.on("fetched", testFetchedListener);
@@ -577,19 +589,19 @@ describe("messages", () => {
 		const rvc = await RedisValueCache.new<string>({
 			...defaultOptsString,
 			redis: {
-				// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+				// biome-ignore lint/suspicious/noExplicitAny: needed for test since client is not 100% compatible with redis client but should fake the most important parts 
 				client: mockClient as any,
 				channelOpts: {
 					type: "subscribe",
-					name: "channel"
+					name: "channel",
 				},
 				getOpts: {
-					type: "GET"
-				}
+					type: "GET",
+				},
 			},
 			genKeyFromMsg: testGenKeyFromMsg,
 			deserialize: testDeserialize as unknown as Deserialize<string>,
-			onMessageStrategy: "refetch"
+			onMessageStrategy: "refetch",
 		});
 
 		rvc.on("refetched", testRefetchedListener);
@@ -623,7 +635,7 @@ describe("messages", () => {
 			...defaultOptsString,
 			genKeyFromMsg: (msg: string) => {
 				try {
-					const msgObject = JSON.parse(msg) as {key: string; info: string; msgId: number};
+					const msgObject = JSON.parse(msg) as { key: string; info: string; msgId: number };
 					return msgObject.key;
 				} catch {
 					return null;
@@ -651,23 +663,23 @@ describe("messages", () => {
 
 describe("freeze/ clone options", () => {
 	test("clone Options work as expected", async () => {
-		const rvc = new RedisValueCache<{val: string}>({
+		const rvc = new RedisValueCache<{ val: string }>({
 			redis: {
 				channelOpts: {
 					type: "subscribe",
-					name: "channel"
+					name: "channel",
 				},
 				getOpts: {
-					type: "GET"
-				}
+					type: "GET",
+				},
 			},
 			cacheMaxSize: 100,
 			genKeyFromMsg: (msg: string) => {
 				return msg;
 			},
-			deserialize: (rVal: string) => {
+			deserialize: (_rVal: string) => {
 				return { val: "test" };
-			}
+			},
 		});
 
 		await rvc.connect();
@@ -681,27 +693,26 @@ describe("freeze/ clone options", () => {
 		expect(value).not.toBe(clonedValue);
 		expect(value).toEqual(clonedValue);
 		expect(clonedValue).toEqual({ val: "test" });
-
 	});
 	describe("freeze Options", () => {
 		test("object is frozen", async () => {
-			const rvc = new RedisValueCache<{val: string}>({
+			const rvc = new RedisValueCache<{ val: string }>({
 				redis: {
 					channelOpts: {
 						type: "subscribe",
-						name: "channel"
+						name: "channel",
 					},
 					getOpts: {
-						type: "GET"
-					}
+						type: "GET",
+					},
 				},
 				cacheMaxSize: 100,
 				genKeyFromMsg: (msg: string) => {
 					return msg;
 				},
-				deserialize: (rVal: string) => {
+				deserialize: (_rVal: string) => {
 					return { val: "test" };
-				}
+				},
 			});
 
 			await rvc.connect();
@@ -713,26 +724,25 @@ describe("freeze/ clone options", () => {
 			expect(value).toEqual({ val: "test" });
 
 			expect(Object.isFrozen(value)).toBe(true);
-
 		});
 		test("object is deepFrozen", async () => {
-			const rvc = new RedisValueCache<{val: string; innerObject: {id: number; prop: string}}>({
+			const rvc = new RedisValueCache<{ val: string; innerObject: { id: number; prop: string } }>({
 				redis: {
 					channelOpts: {
 						type: "subscribe",
-						name: "channel"
+						name: "channel",
 					},
 					getOpts: {
-						type: "GET"
-					}
+						type: "GET",
+					},
 				},
 				cacheMaxSize: 100,
 				genKeyFromMsg: (msg: string) => {
 					return msg;
 				},
-				deserialize: (rVal: string) => {
+				deserialize: (_rVal: string) => {
 					return { val: "test", innerObject: { id: 0, prop: "test" } };
-				}
+				},
 			});
 
 			await rvc.connect();
@@ -747,24 +757,24 @@ describe("freeze/ clone options", () => {
 			expect(Object.isFrozen(value.innerObject)).toBe(true);
 		});
 		test("object is not frozen if option is set to false", async () => {
-			const rvc = new RedisValueCache<{val: string; innerObject: {id: number; prop: string}}>({
+			const rvc = new RedisValueCache<{ val: string; innerObject: { id: number; prop: string } }>({
 				redis: {
 					channelOpts: {
 						type: "subscribe",
-						name: "channel"
+						name: "channel",
 					},
 					getOpts: {
-						type: "GET"
-					}
+						type: "GET",
+					},
 				},
 				cacheMaxSize: 100,
 				genKeyFromMsg: (msg: string) => {
 					return msg;
 				},
-				deserialize: (rVal: string) => {
+				deserialize: (_rVal: string) => {
 					return { val: "test", innerObject: { id: 0, prop: "test" } };
 				},
-				freeze: false
+				freeze: false,
 			});
 
 			await rvc.connect();
@@ -787,8 +797,10 @@ describe("errorHandlerStrategy", () => {
 		const testError = new Error("Test");
 		const rvc = await RedisValueCache.new<string>({
 			...defaultOptsString,
-			deserialize: () => { throw testError; },
-			errorHandlerStrategy: "throw"
+			deserialize: () => {
+				throw testError;
+			},
+			errorHandlerStrategy: "throw",
 		});
 
 		try {
@@ -805,8 +817,10 @@ describe("errorHandlerStrategy", () => {
 		const testError = new Error("Test");
 		const rvc = await RedisValueCache.new<string>({
 			...defaultOptsString,
-			deserialize: () => { throw testError; },
-			errorHandlerStrategy: "emit"
+			deserialize: () => {
+				throw testError;
+			},
+			errorHandlerStrategy: "emit",
 		});
 
 		rvc.on("unexpectedError", (error) => {
@@ -825,8 +839,10 @@ describe("errorHandlerStrategy", () => {
 		const testError = new Error("Test");
 		const rvc = await RedisValueCache.new<string>({
 			...defaultOptsString,
-			deserialize: () => { throw testError; },
-			errorHandlerStrategy: "warn"
+			deserialize: () => {
+				throw testError;
+			},
+			errorHandlerStrategy: "warn",
 		});
 
 		const warnSpy = jest.spyOn(console, "warn");
@@ -841,7 +857,6 @@ describe("errorHandlerStrategy", () => {
 
 		expect(warnSpy).toHaveBeenCalledWith(testError);
 	});
-
 });
 
 describe("Misc", () => {
