@@ -138,6 +138,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	private freeze = true;
 	private cacheFallbackValues = false;
 	private promiseMap: Record<string, Promise<storedValueType | undefined> | undefined> = {};
+	private connectingPromise: Promise<void> | undefined;
 
 	constructor(opts: Opts<storedValueType>) {
 		super();
@@ -218,13 +219,32 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 		}
 	}
 
+	public async connect() {
+		if (this.connectingPromise) {
+			return this.connectingPromise;
+		}
+		this.connectingPromise = this._connect();
+		try {
+			await this.connectingPromise;
+		} finally {
+			this.connectingPromise = undefined;
+		}
+	}
+
 	/**
 	 * Connects both clients and subscriber.
 	 * Also subscribes subscriber to the channel(s).
 	 *
+	 * **Note:** Event listeners for `"ready"`, `"end"`, and `"error"` are attached
+	 * to the client and subscriber on first connect and are **never removed**.
+	 * This is intentional — the listeners must persist across disconnect/reconnect
+	 * cycles so that connection state (`clientConnected`, `subscriberConnected`)
+	 * stays accurate and the cache is cleared on errors. The `listenersAdded` flag
+	 * prevents duplicate listener registration on subsequent `connect()` calls.
+	 *
 	 * @memberof RedisObjectCache
 	 */
-	public async connect() {
+	private async _connect() {
 		if (!this.listenersAdded) {
 			this.client.on("ready", () => {
 				this.clientConnected = true;
@@ -370,6 +390,12 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 
 		const results = await Promise.allSettled([this.subscriber.quit(), this.client.quit()]);
 
+		// Force state update in case "end" events didn't fire
+		this.subscriberConnected = false;
+		this.clientConnected = false;
+		this.valueCache.clear();
+		this.promiseMap = {};
+
 		if (results[0].status === "rejected") {
 			this.emit("error", new Error("CLIENT_FAILED_TO_QUIT"), "subscriber");
 		}
@@ -510,6 +536,9 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	 * @memberof RedisValueCache
 	 */
 	private async fetchMethod(key: string, specialFetchOptions?: RedisGetOpts) {
+		if (!this.clientConnected) {
+			return;
+		}
 		let redisValue: string | undefined | null | Record<string, string>;
 
 		const optsToUse = specialFetchOptions ?? this.redisGetOpts;
@@ -697,11 +726,16 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 		let client: ReturnType<typeof createClient> | undefined;
 
 		if ("client" in opts.redis && opts.redis.client) {
-
-			if (!(opts.redis.client.constructor && opts.redis.client.constructor.name === "Commander")) {
+			const c = opts.redis.client as { duplicate?: unknown; connect?: unknown; disconnect?: unknown; on?: unknown };
+			if (
+				typeof c.duplicate !== "function" ||
+				typeof c.connect !== "function" ||
+				typeof c.disconnect !== "function" ||
+				typeof c.on !== "function"
+			) {
 				throw new TypeError("OPTS_REDIS_CLIENT_INVALID");
 			}
-			client = opts.redis.client as ReturnType<typeof createClient>;
+			client = c as ReturnType<typeof createClient>;
 		}
 
 		if (!("getOpts" in opts.redis) || !opts.redis.getOpts) {
@@ -783,6 +817,18 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	}
 }
 
+/**
+ * Deep freezes an object and all of its nested properties recursively.
+ *
+ * **Note:** This function uses `Object.getOwnPropertyNames()` which includes
+ * non-enumerable own properties. This means all own properties are frozen,
+ * not just enumerable ones. Ensure that objects passed to this function
+ * (e.g. from `deserialize`) are plain data objects without non-enumerable
+ * internal state that should remain mutable.
+ *
+ * @param o The object to deep freeze
+ * @returns The same object, now deeply frozen
+ */
 function deepFreeze<T>(o: T): T {
 	Object.freeze(o);
 

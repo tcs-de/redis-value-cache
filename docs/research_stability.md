@@ -151,6 +151,9 @@ const previousAttempt = this.promiseMap[promiseKey];
 ```
 Alternatively, if mixing `redisGetOpts` per key is not an intended use case, document that `redisGetOpts` must be consistent per key and consider throwing if a mismatch is detected.
 
+Comment: it is not intended to mix different getOpts for the same key. To save on the overhead of checking every fetch and saving previous getOpts the additional check will not be added for now.
+WONT FIX
+
 ---
 
 ### 6. ~~`onMessage` emits `"refetched"` / `"fetched"` even when the fetch failed~~ ✅ FIXED
@@ -211,7 +214,7 @@ if (typeof opts.cacheMaxSize === "number") {
 
 ---
 
-### 8. `connect()` race condition when called concurrently ❌ NOT FIXED
+### 8. ~~`connect()` race condition when called concurrently~~ ✅ FIXED
 
 **Location:** `connect()` method (~line 244–271)
 
@@ -222,7 +225,7 @@ If `connect()` is called twice concurrently (e.g. from `new()` and user code):
 
 There is no mutex or guard preventing concurrent `connect()` invocations. The `listenersAdded` flag only prevents duplicate event listeners, not duplicate connection attempts.
 
-**Suggested fix:** Add a connecting guard promise:
+**Fix:** Add a connecting guard promise:
 ```ts
 private connectingPromise: Promise<void> | undefined;
 
@@ -242,11 +245,12 @@ private async _connect() {
     // ... existing connect logic ...
 }
 ```
-This ensures concurrent callers await the same connection attempt instead of starting duplicate ones.
+
+> **Status:** Fixed. `connect()` now uses a `connectingPromise` guard — concurrent callers await the same connection attempt.
 
 ---
 
-### 9. `quit()` doesn't guarantee connected-state update on partial failure ❌ NOT FIXED
+### 9. ~~`quit()` doesn't guarantee connected-state update on partial failure~~ ✅ FIXED
 
 **Location:** `quit()` (~line 330–342)
 
@@ -256,7 +260,7 @@ const results = await Promise.allSettled([this.subscriber.quit(), this.client.qu
 
 If one of the `quit()` calls fails (caught by `allSettled`), the corresponding `"end"` event might not fire, leaving `clientConnected` or `subscriberConnected` as `true`. The instance is then in an inconsistent state — it believes it's connected but the Redis client may be in a broken state.
 
-**Suggested fix:** Explicitly update the connection state after `quit()` regardless of whether the `"end"` event fires:
+**Fix:** Explicitly update the connection state after `quit()` regardless of whether the `"end"` event fires:
 ```ts
 public async quit() {
     this.assertConnected();
@@ -276,6 +280,8 @@ public async quit() {
     }
 }
 ```
+
+> **Status:** Fixed. `quit()` now explicitly sets `subscriberConnected = false`, `clientConnected = false`, clears `valueCache`, and resets `promiseMap` after `allSettled`.
 
 ---
 
@@ -350,9 +356,12 @@ private async fetch(key: string, specialFetchOptions?: { redisGetOptions?: Redis
 ```
 Alternatively, document that the `"throw"` strategy intentionally bypasses fallback, if that is the desired behavior.
 
+Comment: The intent is for the fallbackMethod to only run on null or undefined values. If the error is removed and a fetch Method with errors is provided it will always run the fallbackMethod and stop caching the values.
+WONT FIX
+
 ---
 
-### 13. Client validation by `constructor.name` is fragile ❌ NOT FIXED
+### 13. ~~Client validation by `constructor.name` is fragile~~ ✅ FIXED
 
 **Location:** `checkOpts()` (~line 677)
 
@@ -367,7 +376,7 @@ This breaks when:
 - A different version of node-redis uses a different internal class name
 - The client is a subclass or wrapper around the redis client
 
-**Suggested fix:** Use duck-typing to validate the client has the required methods instead of checking the constructor name:
+**Fix:** Use duck-typing to validate the client has the required methods instead of checking the constructor name:
 ```ts
 if ("client" in opts.redis && opts.redis.client) {
     const c = opts.redis.client;
@@ -382,7 +391,8 @@ if ("client" in opts.redis && opts.redis.client) {
     client = c as ReturnType<typeof createClient>;
 }
 ```
-This is more resilient across versions, minification, and proxy/wrapper patterns.
+
+> **Status:** Fixed. `checkOpts()` now uses duck-typing (`typeof c.duplicate/connect/disconnect/on !== "function"`) instead of `constructor.name`.
 
 ---
 
@@ -422,7 +432,7 @@ Comment: Wont fix because the ready event is thought of more as a way to pass on
 
 ---
 
-### 17. `onMessage` race condition — `clientConnected` check is stale for async operations ❌ NOT FIXED
+### 17. ~~`onMessage` race condition — `clientConnected` check is stale for async operations~~ ✅ FIXED
 
 **Location:** `onMessage()` (~line 365)
 
@@ -434,7 +444,7 @@ if (this.clientConnected) {
 
 `clientConnected` is checked once at entry, but the subsequent `await this.valueCache.fetch(...)` is async. By the time the Redis command actually executes, the client may have disconnected. The error is caught by the LRU `fetchMethod` try/catch, but it produces confusing error events.
 
-**Suggested fix:** Re-check connection status before the actual Redis fetch inside `fetchMethod`, or accept this as a known race condition and document it. Since the error is already caught and handled by the LRU `fetchMethod` try/catch, the practical impact is low — the main concern is misleading error events. A pragmatic approach:
+**Fix:**
 ```ts
 private async fetchMethod(key: string, specialFetchOptions?: RedisGetOpts) {
     if (!this.clientConnected) {
@@ -444,9 +454,11 @@ private async fetchMethod(key: string, specialFetchOptions?: RedisGetOpts) {
 }
 ```
 
+> **Status:** Fixed. `fetchMethod()` now checks `if (!this.clientConnected) { return; }` at entry, preventing Redis commands from being issued on a disconnected client.
+
 ---
 
-### 18. `deepFreeze` skips non-own properties but processes non-enumerable own properties ❌ NOT FIXED
+### 18. ~~`deepFreeze` skips non-own properties but processes non-enumerable own properties~~ 📝 DOCUMENTED
 
 **Location:** `deepFreeze()` function (~line 762)
 
@@ -458,9 +470,11 @@ for (const prop of Object.keys(o)) { ... }
 ```
 Alternatively, keep the current behavior but document that `deepFreeze` freezes all own properties including non-enumerable ones, so users' `deserialize` functions should only return plain data objects.
 
+> **Status:** Documented. A JSDoc comment has been added to `deepFreeze()` explaining that `Object.getOwnPropertyNames()` is used (includes non-enumerable own properties) and that objects passed in should be plain data objects.
+
 ---
 
-### 19. No cleanup of Redis client/subscriber event listeners ❌ NOT FIXED
+### 19. ~~No cleanup of Redis client/subscriber event listeners~~ 📝 DOCUMENTED
 
 **Location:** `connect()` method (~line 221–261)
 
@@ -484,6 +498,8 @@ public async disconnect() {
 ```
 Alternatively, since the `listenersAdded` flag already prevents duplicates, and reconnection relies on these listeners remaining active, this may be intentional. If so, document that listeners persist for the instance lifetime to enable reconnect scenarios.
 
+> **Status:** Documented. A JSDoc comment has been added to `_connect()` explaining that event listeners are intentionally never removed — they must persist across disconnect/reconnect cycles for accurate connection state tracking, and `listenersAdded` prevents duplicates.
+
 ---
 
 ## Summary Table
@@ -494,18 +510,18 @@ Alternatively, since the `listenersAdded` flag already prevents duplicates, and 
 | 2 | **Critical** | Bug | ✅ Fixed | `HGETALL` returns `{}` for missing keys (truthy) — mock hides this |
 | 3 | **Critical** | Bug | ✅ Fixed | Falsy valid values (`0`, `""`, `false`) treated as missing |
 | 4 | **Critical** | Test Bug | ✅ Fixed | Mock `isOpen` is method, not getter — tests don't cover disconnect logic |
-| 5 | Medium | Bug | ❌ Open | `promiseMap` dedup ignores different `redisGetOpts` |
+| 5 | Medium | Bug | Won't Fix | `promiseMap` dedup ignores different `redisGetOpts` |
 | 6 | Medium | Bug | ✅ Fixed | `"refetched"`/`"fetched"` emitted even on failed fetches |
 | 7 | Medium | Bug | ✅ Fixed | `cacheMaxSize` accepts NaN, Infinity, negative, zero |
-| 8 | Medium | Race Cond. | ❌ Open | Concurrent `connect()` calls cause double-connect error |
-| 9 | Medium | Bug | ❌ Open | `quit()` partial failure leaves inconsistent connected state |
+| 8 | Medium | Race Cond. | ✅ Fixed | Concurrent `connect()` calls cause double-connect error |
+| 9 | Medium | Bug | ✅ Fixed | `quit()` partial failure leaves inconsistent connected state |
 | 10 | Medium | Race Cond. | ✅ Fixed | `onMessage` bypasses `promiseMap`, allows duplicate fetches |
 | 11 | Low | Memory/State | ✅ Fixed | `promiseMap` not cleared on disconnect |
-| 12 | Low | Design | ❌ Open | `"throw"` strategy prevents fallback from ever running |
-| 13 | Low | Fragility | ❌ Open | Client validated by `constructor.name` — breaks with minification |
+| 12 | Low | Design | Won't Fix | `"throw"` strategy prevents fallback from ever running |
+| 13 | Low | Fragility | ✅ Fixed | Client validated by `constructor.name` — breaks with minification |
 | 14 | Low | Edge Case | ✅ Fixed | Empty string `""` key is processed as valid |
 | 15 | Low | Edge Case | ✅ Fixed | Empty string channel name not rejected |
 | 16 | Low | Design | Won't Fix | `"ready"` event fires on every reconnect |
-| 17 | Low | Race Cond. | ❌ Open | `clientConnected` check stale for async `onMessage` body |
-| 18 | Low | Edge Case | ❌ Open | `deepFreeze` freezes non-enumerable own properties |
-| 19 | Low | Leak | ❌ Open | Event listeners on redis clients never removed |
+| 17 | Low | Race Cond. | ✅ Fixed | `clientConnected` check stale for async `onMessage` body |
+| 18 | Low | Edge Case | Documented | `deepFreeze` freezes non-enumerable own properties |
+| 19 | Low | Leak | Documented | Event listeners on redis clients never removed |
