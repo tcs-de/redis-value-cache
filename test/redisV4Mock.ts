@@ -39,9 +39,7 @@ export class Client extends EventEmitter {
 	private open = false;
 	private listener: ((msg: string) => Promise<void>) | undefined;
 
-	public isOpen() {
-		return this.open;
-	}
+	public get isOpen() { return this.open; }
 
 	public async connect() {
 		await setTimeout(1);

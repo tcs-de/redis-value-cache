@@ -323,13 +323,17 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 
 			this.promiseMap[key] = currentAttempt;
 
-			value = await currentAttempt;
+			try {
+				value = await currentAttempt;
+			} finally {
+				delete this.promiseMap[key];
+			}
 
 
 			delete this.promiseMap[key];
 		}
 
-		if (value && opts?.clone) {
+		if (value !== undefined && opts?.clone) {
 			value = cloneDeep(value);
 		}
 
@@ -343,6 +347,8 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 	 * @memberof RedisObjectCache
 	 */
 	public async disconnect() {
+		this.promiseMap = {};
+
 		// is done without checking for client and subscriber connected because we want to keep option to disconnect when reconnects do not work
 		if (this.subscriber.isOpen) {
 			await this.subscriber.disconnect();
@@ -424,7 +430,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 			} catch (error) {
 				this.errorHandler(error, { msg });
 			}
-			if (key !== null && key !== undefined) {
+			if (key !== null && key !== undefined && key !== "" && typeof key === "string") {
 				// delete key and find out if value was in cache
 				const wasInCache = this.valueCache.delete(key);
 				if (this.onMessageStrategy === "drop") {
@@ -434,17 +440,24 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 					return;
 				}
 
+				if (this.promiseMap[key]) {
+					return;
+				}
+
 				if (this.onMessageStrategy === "refetch" && !wasInCache) {
 					return;
 				}
 
-				await this.valueCache.fetch(key, { context: specialFetchOptions });
+				const value = await this.valueCache.fetch(key, { context: specialFetchOptions });
 
-				if (this.onMessageStrategy === "refetch" && wasInCache) {
-					this.emit("refetched", key);
-				} else {
-					this.emit("fetched", key);
+				if (value !== undefined && value !== null) {
+					if (this.onMessageStrategy === "refetch" && wasInCache) {
+						this.emit("refetched", key);
+					} else {
+						this.emit("fetched", key);
+					}
 				}
+
 			}
 		}
 	}
@@ -467,7 +480,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 			this.errorHandler(error, { key });
 		}
 
-		if (!savedValue && this.fallbackFetchMethod) {
+		if ((savedValue === null || savedValue === undefined) && this.fallbackFetchMethod) {
 			try {
 				savedValue = await this.fallbackFetchMethod(key);
 			} catch (error) {
@@ -520,7 +533,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 		}
 
 		let value: storedValueType | null | undefined;
-		if (redisValue) {
+		if (redisValue !== null && redisValue !== undefined && !(optsToUse.type === "HGETALL" && typeof redisValue === "object" && Object.keys(redisValue).length === 0)) {
 			// @ts-expect-error the deserialize should be typed correctly according to which getOption was selected see Opts type
 			value = this.deserialize(redisValue, key);
 		}
@@ -568,6 +581,9 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 
 		if ("cacheMaxSize" in opts) {
 			if (typeof opts.cacheMaxSize === "number") {
+				if (!Number.isFinite(opts.cacheMaxSize) || opts.cacheMaxSize < 1 || !Number.isInteger(opts.cacheMaxSize)) {
+					throw new TypeError("OPTS_CACHE_MAX_SIZE_INVALID");
+				}
 				cacheMaxSize = opts.cacheMaxSize;
 			} else {
 				throw new TypeError("OPTS_CACHE_MAX_SIZE_TYPE_MISMATCH");
@@ -661,7 +677,7 @@ export class RedisValueCache<storedValueType extends NonNullable<unknown> = NonN
 				"type" in opts.redis.channelOpts &&
 				"name" in opts.redis.channelOpts &&
 				(opts.redis.channelOpts.type === "subscribe" || opts.redis.channelOpts.type === "pSubscribe") &&
-				typeof opts.redis.channelOpts.name === "string"
+				typeof opts.redis.channelOpts.name === "string" && opts.redis.channelOpts.name !== ""
 			)
 		) {
 			throw new TypeError("OPTS_REDIS_CHANNEL_OPTS_TYPE_INVALID");
