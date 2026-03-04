@@ -1,10 +1,9 @@
-import type { Deserialize, FallbackFetchMethode, Opts } from "../index";
+/** biome-ignore-all lint/suspicious/noExplicitAny: needed for test since client is not 100% compatible with redis client but should fake the most important parts */
+import type { Deserialize, Opts } from "../index";
 
-import { setTimeout } from "node:timers/promises";
 import { RedisValueCache } from "../index";
 import redisV4Mock, { Client } from "./redisV4Mock";
 
-// biome-ignore lint/suspicious/noExplicitAny: needed for test since client is not 100% compatible with redis client but should fake the most important parts
 const mockClient = redisV4Mock.createClient() as any;
 
 const defaultOptsString: Opts<string> = {

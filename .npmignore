@@ -6,6 +6,7 @@
 index.ts
 test/
 dist/test/
+docs/
 tsconfig.json
 jest.config.ts
 jest.setup.redis-mock.ts
@@ -15,3 +16,4 @@ dist/jest.setup.redis-mock.js
 jest.config.js
 dist/redisV4Mock.js
 dist/redisV4Mock.d.ts
+biome.json

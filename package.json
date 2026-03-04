@@ -1,37 +1,37 @@
 {
-  "name": "redis-value-cache",
-  "version": "1.0.6",
-  "description": "",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
-  "scripts": {
-    "test": "jest",
-    "build:ts": "tsc",
-    "watch:ts": "tsc -w",
-    "lint": "eslint"
-  },
-  "author": "L.Rager <de3lo734@gmail.com>",
-  "license": "MIT",
-  "keywords": [
-    "redis",
-    "cache",
-    "pub/sub"
-  ],
-  "devDependencies": {
-    "@biomejs/biome": "2.3.15",
-    "@types/jest": "^29.5.12",
-    "@types/lodash": "^4.17.7",
-    "@types/node": "^22.2.0",
-    "ts-jest": "^29.2.5",
-    "typescript": "^5.2.2"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/tcs-de/redis-value-cache.git"
-  },
-  "dependencies": {
-    "lodash": "^4.17.21",
-    "lru-cache": "^11.0.0",
-    "redis": "^4.7.0"
-  }
+	"name": "redis-value-cache",
+	"version": "1.1.0",
+	"description": "",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"scripts": {
+		"test": "jest",
+		"build:ts": "tsc",
+		"watch:ts": "tsc -w",
+		"lint": "eslint"
+	},
+	"author": "L.Rager <de3lo734@gmail.com>",
+	"license": "MIT",
+	"keywords": [
+		"redis",
+		"cache",
+		"pub/sub"
+	],
+	"devDependencies": {
+		"@biomejs/biome": "2.3.15",
+		"@types/jest": "^29.5.12",
+		"@types/lodash": "^4.17.7",
+		"@types/node": "^22.2.0",
+		"ts-jest": "^29.2.5",
+		"typescript": "^5.2.2"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/tcs-de/redis-value-cache.git"
+	},
+	"dependencies": {
+		"lodash": "^4.17.21",
+		"lru-cache": "^11.0.0",
+		"redis": "^4.7.0"
+	}
 }
